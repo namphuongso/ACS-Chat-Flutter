@@ -1,0 +1,29 @@
+name: chat_native_platform_interface
+description: >
+  Cầu nối duy nhất tới ACS Chat SDK realtime (Trouter) qua native.
+  KHÔNG có UI, KHÔNG có business logic — chỉ forward event tin nhắn mới
+  qua EventChannel (đúng ranh giới trách nhiệm mục 3 kế hoạch gốc).
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.yourorg.chatnative
+        pluginClass: ChatNativePlugin
+      # ios: chưa implement — MVP chỉ làm Android trước theo quyết định
+      # người dùng. Thêm sau khi có nhu cầu release iOS (Giai đoạn 2b).
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0

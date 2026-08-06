@@ -1,0 +1,18 @@
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+pubspec.lock
+melos_tool/
+android/local.properties
+**/android/.gradle/
+**/ios/Pods/
+**/ios/.symlinks/
+# Env files — chỉ .env.example được commit
+.env
+**/.env
+!.env.example
+!**/.env.example

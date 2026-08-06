@@ -1,0 +1,52 @@
+group 'com.yourorg.chatnative'
+version '0.1.0'
+
+buildscript {
+    ext.kotlin_version = '1.9.22'
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.1.0'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+android {
+    namespace 'com.yourorg.chatnative'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 24 // ACS Android Chat SDK yêu cầu tối thiểu — verify lại
+                   // với version SDK thật đang dùng, xem README riêng
+                   // theo mục 7.5 kế hoạch gốc.
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    // TODO(verify-version): xác nhận version mới nhất trên Maven Central
+    // trước khi build thật — mình không gọi được mạng ra Maven trong
+    // sandbox này để tự kiểm tra.
+    implementation 'com.azure.android:azure-communication-chat:2.1.0'
+    implementation 'com.azure.android:azure-communication-common:1.2.0'
+}

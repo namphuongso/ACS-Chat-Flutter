@@ -1,0 +1,27 @@
+name: chat_module_workspace
+
+repository: https://github.com/yourorg/chat-module 
+
+packages:
+  - packages/**
+  - example
+
+command:
+  version:
+    linkToCommits: true
+    workspaceChangelog: true
+  bootstrap:
+    runPubGetInParallel: true
+
+scripts:
+  analyze:
+    run: melos exec -- flutter analyze
+    description: Phân tích tĩnh toàn bộ package.
+
+  test:
+    run: melos exec --dir-exists=test -- flutter test
+    description: Chạy unit test toàn bộ package có thư mục test.
+
+  format:
+    run: melos exec -- dart format --set-exit-if-changed .
+    description: Kiểm tra format code.

@@ -1,0 +1,26 @@
+name: chat_module_example
+description: App mẫu để dev/test chat_core + chat_ui + native realtime cùng lúc.
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  chat_core:
+    path: ../packages/chat_core
+  chat_ui:
+    path: ../packages/chat_ui
+  flutter_riverpod: ^2.5.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+ 
+flutter:
+  assets:
+    - .env 
