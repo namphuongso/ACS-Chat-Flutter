@@ -39,10 +39,10 @@ class ChatNativePlatformInterface {
   ChatNativePlatformInterface({
     MethodChannel? methodChannel,
     EventChannel? eventChannel,
-  })  : _methodChannel = methodChannel ??
-            const MethodChannel('com.yourorg.chatnative/methods'),
+  })  : _methodChannel =
+            methodChannel ?? const MethodChannel('com.npp.chatnative/methods'),
         _eventChannel =
-            eventChannel ?? const EventChannel('com.yourorg.chatnative/events');
+            eventChannel ?? const EventChannel('com.npp.chatnative/events');
 
   final MethodChannel _methodChannel;
   final EventChannel _eventChannel;

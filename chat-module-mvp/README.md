@@ -2,7 +2,7 @@
 
 Monorepo 3 package: `chat_core` (domain + data + provider, Dart), `chat_ui`
 (widget mặc định), `chat_native_platform_interface` (native realtime —
-**hiện chỉ Android**, xem `packages/chat_native_platform_interface/README.md`).
+Android + iOS, xem `packages/chat_native_platform_interface/README.md`).
 
 > **Trạng thái MVP**: chat 1-1 (direct), realtime qua native Android,
 > chưa có group/roles/participant-management/file-upload/typing-nhận/
@@ -39,6 +39,7 @@ nếu chưa tự động resolve qua plugin.
 
 | Lệnh | Việc |
 |---|---|
+| `melos list --long` | Liệt kê danh sách và phiên bản của các package |
 | `melos run analyze` | Lint toàn bộ package |
 | `melos run test` | Test toàn bộ package có thư mục `test/` |
 | `melos run format` | Kiểm tra format |
@@ -51,14 +52,15 @@ nếu chưa tự động resolve qua plugin.
 - [ ] Verify field JSON thật trả về từ ACS `listMessages`/`sendMessage`
       khớp với `Message.fromAcsJson` (đang để TODO trong
       `chat_core/lib/domain/entities/message.dart`).
-- [ ] Verify tên class/method SDK Azure Communication Chat Android
-      (`ChatClient.Builder()`, `startRealtimeNotifications()`,
-      `addEventHandler(...)`) khớp đúng version dùng thật — có TODO
-      trong `ChatNativePlugin.kt`.
+- [x] Verify tên class/method SDK Azure Communication Chat **Android**
+      (đã build APK thành công với `azure-communication-chat:2.1.0`, xem
+      `REALTIME_PROGRESS.md`).
+- [x] Verify tên class/method SDK **iOS** (đã build thành công với pod
+      `AzureCommunicationChat:1.3.7`, xem `REALTIME_PROGRESS.md`).
 - [ ] Verify body request thật của các endpoint BE chưa thấy đầy đủ lúc
       viết code (vd `POST /conversations/direct` — mình giả định field
       `targetUserId`, cần đối chiếu lại với BE team).
-- [ ] Điền `com.yourorg.chatnative` bằng package name thật của tổ chức
+- [x] Điền `com.npp.chatnative` bằng package name thật của tổ chức
       (đang để placeholder xuyên suốt `chat_native_platform_interface`).
 
 ## Cấu trúc

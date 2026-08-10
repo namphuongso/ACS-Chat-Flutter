@@ -13,7 +13,6 @@ environment:
 
 dependencies:
   http: ^1.2.0
-  riverpod: ^2.5.0
   meta: ^1.11.0
   chat_native_platform_interface:
     path: ../chat_native_platform_interface

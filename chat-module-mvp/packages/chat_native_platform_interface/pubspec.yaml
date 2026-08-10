@@ -14,10 +14,10 @@ flutter:
   plugin:
     platforms:
       android:
-        package: com.yourorg.chatnative
+        package: com.npp.chatnative
         pluginClass: ChatNativePlugin
-      # ios: chưa implement — MVP chỉ làm Android trước theo quyết định
-      # người dùng. Thêm sau khi có nhu cầu release iOS (Giai đoạn 2b).
+      ios:
+        pluginClass: ChatNativePlugin
 
 dependencies:
   flutter:
