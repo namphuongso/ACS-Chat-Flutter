@@ -2,7 +2,10 @@ import 'package:chat_core/chat_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/chat_ui_config.dart';
 import '../../../../core/utils/avatar_utils.dart';
+import '../../../../core/widgets/search_field.dart';
+import '../../../conversation_list/presentation/providers/conversation_providers.dart';
 import '../../../shared/presentation/providers/shared_providers.dart';
 import '../notifiers/contact_list_notifier.dart';
 
@@ -25,20 +28,19 @@ class ContactListScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final state = ref.watch(contactListNotifierProvider);
     final notifier = ref.read(contactListNotifierProvider.notifier);
+    final uiConfig = ref.watch(chatUiConfigProvider);
 
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: TextField(
-            decoration: const InputDecoration(
-              hintText: 'Tìm kiếm danh bạ...',
-              prefixIcon: Icon(Icons.search),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(8.0)),
-              ),
-            ),
-            onSubmitted: notifier.search,
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: SearchField(
+            hintText: 'Tìm kiếm danh bạ...',
+            onSearch: notifier.search,
+            fillColor: uiConfig.searchBarFillColor,
+            iconColor: uiConfig.searchBarIconColor,
+            textColor: uiConfig.searchBarTextColor,
+            hintColor: uiConfig.searchBarHintColor,
           ),
         ),
         Expanded(
@@ -115,7 +117,11 @@ class ContactListScreen extends ConsumerWidget {
     try {
       final createRoomUseCase =
           ref.read(getOrCreateDirectConversationUseCaseProvider);
-      final conversation = await createRoomUseCase(user.id);
+      var conversation = await createRoomUseCase(user.id);
+      // Response create-room có thể thiếu avatar/contactName của member (chỉ
+      // get-room-chats mới trả đủ) → enrich bằng thông tin người vừa chọn
+      // trong danh bạ để avatar/name hiển thị đúng ngay, không cần refresh.
+      conversation = _enrichWithContact(conversation, user);
 
       if (conversation.token != null &&
           conversation.tokenUtcExp != null &&
@@ -130,6 +136,11 @@ class ContactListScreen extends ConsumerWidget {
             );
       }
 
+      // Thêm room vừa tạo vào danh sách chat gần đây ngay — không phải đợi
+      // pull-to-refresh (với điều kiện màn hình danh sách đang tồn tại).
+      final listNotifier = ref.read(conversationListProvider.notifier);
+      listNotifier.addOrUpdateRoom(conversation);
+
       if (context.mounted) {
         Navigator.of(context).pop(); // Tắt loading
         onTapContact!(conversation);
@@ -142,5 +153,41 @@ class ContactListScreen extends ConsumerWidget {
         );
       }
     }
+  }
+
+  /// Điền thông tin (avatar/displayName) của người vừa chọn vào participant
+  /// của room mới tạo nếu create-room response trả thiếu.
+  Conversation _enrichWithContact(
+      Conversation conversation, ChatUser contact) {
+    final idx = conversation.participants.indexWhere(
+      (p) => p.id == contact.id || p.acsUserId == contact.acsUserId,
+    );
+    if (idx == -1) {
+      // create-room không trả members → thêm member người kia từ danh bạ.
+      return conversation.copyWith(
+        participants: [
+          ...conversation.participants,
+          ChatUser(
+            id: contact.id,
+            displayName: contact.displayName,
+            avatarUrl: contact.avatarUrl,
+            acsUserId: contact.acsUserId,
+          ),
+        ],
+      );
+    }
+    final other = conversation.participants[idx];
+    if (isNetworkAvatar(other.avatarUrl)) return conversation;
+    final patched = [...conversation.participants];
+    patched[idx] = ChatUser(
+      id: other.id,
+      displayName: other.displayName.isNotEmpty
+          ? other.displayName
+          : contact.displayName,
+      avatarUrl: contact.avatarUrl,
+      acsUserId: other.acsUserId ?? contact.acsUserId,
+      email: other.email ?? contact.email,
+    );
+    return conversation.copyWith(participants: patched);
   }
 }

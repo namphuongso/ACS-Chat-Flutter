@@ -1,14 +1,11 @@
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../../core/chat_ui_config.dart';
 import '../../../../core/utils/avatar_utils.dart';
-
-/// Bong bóng tin nhắn — 1 chiều (text). Group/reaction/reply chưa có
-/// ở MVP, xem roadmap-tinh-nang-sau-mvp.md nhóm 3.
-///
-/// Tin của người khác: hiển thị ô avatar nhỏ phía trên trái + thời gian gửi.
-/// Tin của mình: không avatar, có thời gian + icon trạng thái gửi.
-class MessageBubble extends StatelessWidget {
+ 
+class MessageBubble extends ConsumerWidget {
   const MessageBubble({
     super.key,
     required this.message,
@@ -16,6 +13,7 @@ class MessageBubble extends StatelessWidget {
     this.senderAvatarUrl,
     this.showSenderAvatar = true,
     this.onLongPress,
+    this.onLongPressStart,
   });
 
   final Message message;
@@ -33,16 +31,24 @@ class MessageBubble extends StatelessWidget {
   /// Gọi khi long-press tin nhắn (mở menu ghim/actions).
   final VoidCallback? onLongPress;
 
+  /// Vị trí long-press — dùng để neo context menu mở ngay vị trí ngón tay.
+  final GestureLongPressStartCallback? onLongPressStart;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final bubbleColor =
-        isMe ? const Color(0xFF0084FF) : const Color(0xFFE4E6EB);
-    final textColor =
-        isMe ? theme.colorScheme.onPrimary : theme.colorScheme.onSurface;
+    final config = ref.watch(chatUiConfigProvider);
+    final bubbleColor = isMe
+        ? (config.sentBubbleColor ?? theme.colorScheme.primary)
+        : (config.receivedBubbleColor ??
+            theme.colorScheme.surfaceContainerHighest);
+    final textColor = isMe
+        ? (config.sentTextColor ?? theme.colorScheme.onPrimary)
+        : (config.receivedTextColor ?? theme.colorScheme.onSurface);
 
     final bubble = GestureDetector(
-      onLongPress: onLongPress,
+      onLongPress: message.isDeleted ? null : onLongPress,
+      onLongPressStart: message.isDeleted ? null : onLongPressStart,
       child: Container(
         margin: EdgeInsets.only(
           left: isMe ? 12 : 0,
@@ -70,37 +76,35 @@ class MessageBubble extends StatelessWidget {
                   Icon(
                     Icons.push_pin,
                     size: 11,
-                    color: isMe ? Colors.white70 : Colors.black45,
+                    color: textColor.withValues(alpha: 0.7),
                   ),
                   const SizedBox(width: 4),
                   Text(
                     'Đã ghim',
                     style: TextStyle(
                       fontSize: 10,
-                      color: isMe ? Colors.white70 : Colors.black45,
+                      color: textColor.withValues(alpha: 0.7),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 4),
             ],
-            Text(message.content, style: TextStyle(color: textColor)),
+            Text(
+              message.isDeleted ? '(tin nhắn đã bị xoá)' : message.content,
+              style: TextStyle(
+                color: textColor,
+                fontStyle: message.isDeleted ? FontStyle.italic : null,
+              ),
+            ),
             const SizedBox(height: 4),
             if (isMe)
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _formatTime(message.createdAt),
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: textColor.withValues(alpha: 0.6),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  _StatusIndicator(
-                      status: message.status, textColor: textColor),
-                ],
+              Text(
+                _formatTime(message.createdAt),
+                style: TextStyle(
+                  fontSize: 11,
+                  color: textColor.withValues(alpha: 0.6),
+                ),
               )
             else
               Text(
@@ -164,23 +168,5 @@ class MessageBubble extends StatelessWidget {
     final h = t.hour.toString().padLeft(2, '0');
     final m = t.minute.toString().padLeft(2, '0');
     return '$h:$m';
-  }
-}
-
-class _StatusIndicator extends StatelessWidget {
-  const _StatusIndicator({required this.status, required this.textColor});
-
-  final MessageDeliveryStatus status;
-  final Color textColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final IconData? icon = switch (status) {
-      MessageDeliveryStatus.sending => Icons.access_time,
-      MessageDeliveryStatus.sent => Icons.check,
-      MessageDeliveryStatus.failed => Icons.error_outline,
-    };
-    if (icon == null) return const SizedBox.shrink();
-    return Icon(icon, size: 12, color: textColor.withValues(alpha: 0.7));
   }
 }

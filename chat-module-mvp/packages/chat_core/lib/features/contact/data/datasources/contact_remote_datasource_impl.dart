@@ -27,7 +27,11 @@ class ContactRemoteDataSourceImpl implements ContactRemoteDataSource {
     final query = <String, String>{
       'pageIndex': pageIndex.toString(),
       'pageSize': pageSize.toString(),
-      if (keyword != null && keyword.isNotEmpty) 'keyword': keyword,
+      // Backend get-contacts là endpoint dạng "search": luôn cần có param
+      // `keyword` (kể cả rỗng = trả tất cả). Trước đây bỏ qua keyword rỗng
+      // khiến request "list all" thiếu param → BE trả 401 (UNAUTHORIZED),
+      // trong khi request có keyword (khi tìm kiếm) lại thành công.
+      'keyword': keyword ?? '',
     };
 
     final data = await _api.get(

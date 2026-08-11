@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../../core/chat_route_observer.dart' show chatRouteObserver;
+import '../../../../core/chat_ui_config.dart';
 import '../../../../core/utils/avatar_utils.dart';
 import '../../../../core/utils/datetime_helper.dart';
 import '../../../../core/utils/last_message_preview.dart';
 import '../../../../core/widgets/offline_banner.dart';
+import '../../../../core/widgets/search_field.dart';
+import '../../../../core/widgets/skeleton.dart';
 import '../../../shared/presentation/providers/connectivity_providers.dart';
 import '../../../shared/presentation/providers/shared_providers.dart';
 import '../providers/conversation_providers.dart';
@@ -28,6 +31,26 @@ class ConversationList extends ConsumerStatefulWidget {
 class _ConversationListState extends ConsumerState<ConversationList>
     with RouteAware {
   final _scrollController = ScrollController();
+  final _searchController = TextEditingController();
+  String _keyword = '';
+
+  /// Tên hiển thị của room dùng cho tìm kiếm: direct → tên người kia,
+  /// group → roomName (fallback tên participant).
+  String _roomTitle(Conversation conversation) {
+    final other = conversation.participants
+        .where((p) => p.id != widget.currentUserId)
+        .firstOrNull;
+    return (conversation.type == ConversationType.direct && other != null)
+        ? other.displayName
+        : (conversation.roomName.isNotEmpty
+            ? conversation.roomName
+            : (other?.displayName ?? 'Unknown'));
+  }
+
+  void _onSearch(String keyword) {
+    if (_keyword == keyword) return;
+    setState(() => _keyword = keyword);
+  }
 
   @override
   void didChangeDependencies() {
@@ -43,6 +66,7 @@ class _ConversationListState extends ConsumerState<ConversationList>
   void dispose() {
     _scrollController.removeListener(_maybeLoadMore);
     _scrollController.dispose();
+    _searchController.dispose();
     chatRouteObserver.unsubscribe(this);
     super.dispose();
   }
@@ -123,8 +147,10 @@ class _ConversationListState extends ConsumerState<ConversationList>
   @override
   Widget build(BuildContext context) {
     final conversations = ref.watch(conversationListProvider);
+    final isLoading = ref.watch(conversationListLoadingProvider);
     final notifier = ref.read(conversationListProvider.notifier);
     final isOnline = ref.watch(isOnlineProvider).value ?? true;
+    final uiConfig = ref.watch(chatUiConfigProvider);
 
     ref.listen(isOnlineProvider, (previous, next) {
       final wasOffline = previous?.value == false;
@@ -138,109 +164,140 @@ class _ConversationListState extends ConsumerState<ConversationList>
     return Column(
       children: [
         if (!isOnline) const OfflineBanner(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: SearchField(
+            hintText: 'Tìm kiếm phòng chat...',
+            controller: _searchController,
+            onSearch: _onSearch,
+            fillColor: uiConfig.searchBarFillColor,
+            iconColor: uiConfig.searchBarIconColor,
+            textColor: uiConfig.searchBarTextColor,
+            hintColor: uiConfig.searchBarHintColor,
+          ),
+        ),
         Expanded(
-          child: conversations.isEmpty
-              ? const Center(child: Text('Chưa có cuộc trò chuyện nào'))
-              : RefreshIndicator(
-                  onRefresh: notifier.refresh,
-                  child: ListView.builder(
-                    controller: _scrollController,
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    itemCount: conversations.length,
-                    itemBuilder: (context, index) {
-                      final conversation = conversations[index];
-                      // MVP chỉ direct — participant còn lại là "người kia" (khác
-                      // currentUserId). Group sẽ cần logic khác (Đợt 1 roadmap).
-                      final other = conversation.participants
-                          .where((p) => p.id != widget.currentUserId)
-                          .firstOrNull;
-                      final title =
-                          (conversation.type == ConversationType.direct &&
-                                  other != null)
-                              ? other.displayName
-                              : (conversation.roomName.isNotEmpty
-                                  ? conversation.roomName
-                                  : (other?.displayName ?? 'Unknown'));
-                      final avatarUrl =
-                          (conversation.type == ConversationType.direct &&
-                                  other != null)
-                              ? (isNetworkAvatar(other.avatarUrl)
-                                  ? other.avatarUrl
-                                  : null)
-                              : (isNetworkAvatar(conversation.avatarUrl)
-                                  ? conversation.avatarUrl
-                                  : (isNetworkAvatar(other?.avatarUrl)
-                                      ? other?.avatarUrl
-                                      : null));
-
-                      return ListTile(
-                        key: ValueKey(conversation.id),
-                        leading: CircleAvatar(
-                          backgroundImage: avatarUrl != null
-                              ? NetworkImage(avatarUrl)
-                              : null,
-                          child: avatarUrl == null
-                              ? Text(title.isNotEmpty
-                                  ? title[0].toUpperCase()
-                                  : '?')
-                              : null,
-                        ),
-                        title: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          LastMessagePreview.format(conversation),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              conversation.lastMessage != null
-                                  ? DateTimeHelper.formatRelative(
-                                      conversation.lastMessage!.createdAt)
-                                  : '',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                color: Colors.grey,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (conversation.pin) ...[
-                                  const Icon(
-                                    Icons.push_pin,
-                                    size: 14,
-                                    color: Colors.grey,
+          child: isLoading && conversations.isEmpty
+              ? const ConversationListSkeleton()
+              : conversations.isEmpty && _keyword.isEmpty
+                  ? const Center(child: Text('Chưa có cuộc trò chuyện nào'))
+                  : RefreshIndicator(
+                      onRefresh: notifier.refresh,
+                      child: Builder(
+                        builder: (context) {
+                          final filtered = _keyword.isEmpty
+                              ? conversations
+                              : conversations
+                                  .where((c) => _roomTitle(c)
+                                      .toLowerCase()
+                                      .contains(_keyword.toLowerCase()))
+                                  .toList();
+                          if (filtered.isEmpty) {
+                            return ListView(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              children: const [
+                                Padding(
+                                  padding: EdgeInsets.symmetric(vertical: 48),
+                                  child: Center(
+                                    child:
+                                        Text('Không tìm thấy cuộc trò chuyện'),
                                   ),
-                                  if (conversation.unreadCount > 0)
-                                    const SizedBox(width: 4),
-                                ],
-                                if (conversation.unreadCount > 0)
-                                  CircleAvatar(
-                                    radius: 10,
-                                    child: Text(
-                                      '${conversation.unreadCount}',
-                                      style: const TextStyle(fontSize: 11),
-                                    ),
-                                  ),
+                                ),
                               ],
-                            ),
-                          ],
-                        ),
-                        onTap: () => widget.onTapConversation(conversation),
-                        onLongPress: () => _showConversationMenu(conversation),
-                      );
-                    },
-                  ),
-                ),
+                            );
+                          }
+                          return ListView.builder(
+                            controller: _scrollController,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            itemCount: filtered.length,
+                            itemBuilder: (context, index) {
+                              final conversation = filtered[index];
+                              // MVP chỉ direct — participant còn lại là "người kia" (khác
+                              // currentUserId). Group sẽ cần logic khác (Đợt 1 roadmap).
+                              final other = conversation.participants
+                                  .where((p) => p.id != widget.currentUserId)
+                                  .firstOrNull;
+                              final title = (conversation.type ==
+                                          ConversationType.direct &&
+                                      other != null)
+                                  ? other.displayName
+                                  : (conversation.roomName.isNotEmpty
+                                      ? conversation.roomName
+                                      : (other?.displayName ?? 'Unknown'));
+                              final avatarUrl = (conversation.type ==
+                                          ConversationType.direct &&
+                                      other != null)
+                                  ? (isNetworkAvatar(other.avatarUrl)
+                                      ? other.avatarUrl
+                                      : null)
+                                  : (isNetworkAvatar(conversation.avatarUrl)
+                                      ? conversation.avatarUrl
+                                      : (isNetworkAvatar(other?.avatarUrl)
+                                          ? other?.avatarUrl
+                                          : null));
+
+                              return ListTile(
+                                key: ValueKey(conversation.id),
+                                leading: CircleAvatar(
+                                  backgroundImage: avatarUrl != null
+                                      ? NetworkImage(avatarUrl)
+                                      : null,
+                                  child: avatarUrl == null
+                                      ? Text(title.isNotEmpty
+                                          ? title[0].toUpperCase()
+                                          : '?')
+                                      : null,
+                                ),
+                                title: Text(
+                                  title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Text(
+                                  LastMessagePreview.format(conversation),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      conversation.lastMessage != null
+                                          ? DateTimeHelper.formatRelative(
+                                              conversation
+                                                  .lastMessage!.createdAt)
+                                          : '',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (conversation.pin)
+                                          const Icon(
+                                            Icons.push_pin,
+                                            size: 14,
+                                            color: Colors.grey,
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                onTap: () =>
+                                    widget.onTapConversation(conversation),
+                                onLongPress: () =>
+                                    _showConversationMenu(conversation),
+                              );
+                            },
+                          );
+                        },
+                      ),
+                    ),
         ),
       ],
     );

@@ -51,6 +51,7 @@ class Message {
     this.status = MessageDeliveryStatus.sent,
     this.metadata,
     this.pin = false,
+    this.deletedOn,
   });
 
   final String id;
@@ -63,6 +64,14 @@ class Message {
   final MessageDeliveryStatus status;
   final bool pin;
 
+  /// Thời điểm tin bị xoá trên ACS (soft-delete). Tin có giá trị này là
+  /// đã bị xoá — chỉ field này mới xác định tin bị xoá, KHÔNG dùng
+  /// `content` rỗng (tin chỉ có attachment cũng có thể rỗng).
+  final DateTime? deletedOn;
+
+  /// Tin đã bị xoá trên ACS (có `deletedOn`). Không hiển thị nữa.
+  bool get isDeleted => deletedOn != null;
+
   /// Dùng cho reply/quote, mention... sau này — để mở sẵn theo mục 7.2
   /// kế hoạch gốc, MVP chưa dùng tới.
   final Map<String, String>? metadata;
@@ -70,19 +79,25 @@ class Message {
   Message copyWith({
     MessageDeliveryStatus? status,
     String? id,
+    String? content,
     bool? pin,
+    DateTime? deletedOn,
+    bool clearDeletedOn = false,
   }) {
     return Message(
       id: id ?? this.id,
       threadId: threadId,
       senderId: senderId,
       senderDisplayName: senderDisplayName,
-      content: content,
+      content: content ?? this.content,
       type: type,
       createdAt: createdAt,
       status: status ?? this.status,
       metadata: metadata,
       pin: pin ?? this.pin,
+      deletedOn: clearDeletedOn
+          ? null
+          : deletedOn ?? this.deletedOn,
     );
   }
 

@@ -111,7 +111,13 @@ class MessageRepositoryImpl implements MessageRepository {
     if (local == null) return;
     try {
       final cached = await local.getCachedMessages(threadId);
-      await local.saveMessages(threadId, _mergeById(cached, [message]));
+      // Cache lưu theo thứ tự mới-nhất trước (khớp thứ tự remote/ACS) — tin
+      // realtime mới nhất phải nằm ĐẦU danh sách. Trước đây append vào cuối
+      // làm cache đảo thứ tự → lần vào sau đọc cache render tin bị ngược.
+      await local.saveMessages(threadId, [
+        message,
+        ...cached.where((m) => m.id != message.id),
+      ]);
     } catch (_) {
       // Cache lỗi không nên làm hỏng luồng chính.
     }
@@ -130,6 +136,53 @@ class MessageRepositoryImpl implements MessageRepository {
       }
     }
     return byId.values.toList();
+  }
+
+  @override
+  Future<bool> updateMessage({
+    required String roomId,
+    required String threadId,
+    required String messageId,
+    required String content,
+  }) async {
+    final success = await _remote.updateMessage(
+      roomId: roomId,
+      messageId: messageId,
+      content: content,
+    );
+    final local = _local;
+    if (success && local != null) {
+      try {
+        final cached = await local.getCachedMessages(threadId);
+        final updated = cached
+            .map((m) => m.id == messageId ? m.copyWith(content: content) : m)
+            .toList();
+        await local.saveMessages(threadId, updated);
+      } catch (_) {}
+    }
+    return success;
+  }
+
+  @override
+  Future<bool> deleteMessage({
+    required String roomId,
+    required String threadId,
+    required String messageId,
+  }) async {
+    final success = await _remote.deleteMessage(
+      roomId: roomId,
+      messageId: messageId,
+    );
+    final local = _local;
+    if (success && local != null) {
+      try {
+        // Xoá khỏi cache luôn để tin đã xoá không hiện lại ở lần vào sau.
+        final cached = await local.getCachedMessages(threadId);
+        await local.saveMessages(
+            threadId, cached.where((m) => m.id != messageId).toList());
+      } catch (_) {}
+    }
+    return success;
   }
 
   @override

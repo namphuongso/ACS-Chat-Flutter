@@ -95,8 +95,8 @@ class HiveConversationLocalDataSource implements ConversationLocalDataSource {
         participants: ((j['participants'] as List?) ?? [])
             .map((e) => _userFromJson(e as Map<String, dynamic>))
             .toList(),
-        createdAt: DateTime.parse(j['createdAt'] as String),
-        updatedAt: DateTime.parse(j['updatedAt'] as String),
+        createdAt: DateTime.parse(j['createdAt'] as String).toLocal(),
+        updatedAt: DateTime.parse(j['updatedAt'] as String).toLocal(),
         roomName: j['roomName'] as String? ?? '',
         avatarUrl: j['avatarUrl'] as String?,
         pid: j['pid'] as String?,
@@ -111,7 +111,8 @@ class HiveConversationLocalDataSource implements ConversationLocalDataSource {
                     (j['lastMessage'] as Map)['senderDisplayName'] as String? ??
                         '',
                 createdAt: DateTime.parse(
-                    (j['lastMessage'] as Map)['createdAt'] as String),
+                        (j['lastMessage'] as Map)['createdAt'] as String)
+                    .toLocal(),
               ),
       );
 

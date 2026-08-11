@@ -163,6 +163,95 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
   }
 
   @override
+  Future<bool> updateMessage({
+    required String roomId,
+    required String messageId,
+    required String content,
+  }) async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final uri =
+        Uri.parse('${_config.backendBaseUrl}${ChatApiEndpoints.updateMessage}');
+    final requestBody = jsonEncode({
+      'roomId': roomId,
+      'messageId': messageId,
+      'content': content,
+      'metaData': {},
+    });
+
+    developer.log('POST Request (update message): $uri\nBody: $requestBody',
+        name: 'ChatModule');
+
+    final response = await _http
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $appToken',
+            'Content-Type': 'application/json',
+          },
+          body: requestBody,
+        )
+        .timeout(const Duration(seconds: 15));
+
+    developer.log(
+        'POST Response (update message) [${response.statusCode}]: '
+        '${response.body}',
+        name: 'ChatModule');
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw ChatApiException(
+        statusCode: response.statusCode,
+        code: 'ACS_UPDATE_FAILED',
+        message: response.body,
+      );
+    }
+    return true;
+  }
+
+  @override
+  Future<bool> deleteMessage({
+    required String roomId,
+    required String messageId,
+  }) async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final uri =
+        Uri.parse('${_config.backendBaseUrl}${ChatApiEndpoints.deleteMessage}');
+    final requestBody = jsonEncode({
+      'roomId': roomId,
+      'messageId': messageId,
+    });
+
+    developer.log('POST Request (delete message): $uri\nBody: $requestBody',
+        name: 'ChatModule');
+
+    final response = await _http
+        .post(
+          uri,
+          headers: {
+            'Authorization': 'Bearer $appToken',
+            'Content-Type': 'application/json',
+          },
+          body: requestBody,
+        )
+        .timeout(const Duration(seconds: 15));
+
+    developer.log(
+        'POST Response (delete message) [${response.statusCode}]: '
+        '${response.body}',
+        name: 'ChatModule');
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw ChatApiException(
+        statusCode: response.statusCode,
+        code: 'ACS_DELETE_FAILED',
+        message: response.body,
+      );
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    return json['data'] == true;
+  }
+
+  @override
   Future<bool> pinMessage(String messageId, bool pin) async {
     final appToken = await _appTokenProvider.getAppToken();
     final uri =

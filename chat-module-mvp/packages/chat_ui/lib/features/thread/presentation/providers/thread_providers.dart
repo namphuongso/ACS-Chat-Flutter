@@ -35,6 +35,16 @@ final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
   return SendMessageUseCase(repo);
 });
 
+final updateMessageUseCaseProvider = Provider<UpdateMessageUseCase>((ref) {
+  final repo = ref.watch(messageRepositoryProvider);
+  return UpdateMessageUseCase(repo);
+});
+
+final deleteMessageUseCaseProvider = Provider<DeleteMessageUseCase>((ref) {
+  final repo = ref.watch(messageRepositoryProvider);
+  return DeleteMessageUseCase(repo);
+});
+
 final listMessagesUseCaseProvider = Provider<ListMessagesUseCase>((ref) {
   final repo = ref.watch(messageRepositoryProvider);
   return ListMessagesUseCase(repo);
@@ -89,6 +99,9 @@ final threadMessagesProvider =
     listMessagesUseCaseProvider,
     watchNewMessagesUseCaseProvider,
     sendMessageUseCaseProvider,
+    updateMessageUseCaseProvider,
+    deleteMessageUseCaseProvider,
+    pinMessageUseCaseProvider,
     stopWatchingMessagesUseCaseProvider,
     getPinnedMessagesUseCaseProvider,
   ],

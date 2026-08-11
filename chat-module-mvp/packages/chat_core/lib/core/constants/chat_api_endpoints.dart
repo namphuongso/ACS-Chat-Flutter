@@ -15,6 +15,8 @@ abstract final class ChatApiEndpoints {
 
   // Message
   static const sendMessage = '/api/chat/send-message';
+  static const updateMessage = '/api/chat/update-message';
+  static const deleteMessage = '/api/chat/delete-message';
 
   /// Ghim/bỏ ghim tin nhắn — dùng query `messageId` + `pin`.
   static const pinMessage = '/api/chat/pin-message';

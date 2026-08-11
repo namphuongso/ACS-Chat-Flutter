@@ -11,6 +11,20 @@ abstract class MessageRemoteDataSource {
     required String content,
   });
 
+  /// Sửa nội dung tin nhắn đã gửi — đi qua BE (`POST /chat/update-message`).
+  Future<bool> updateMessage({
+    required String roomId,
+    required String messageId,
+    required String content,
+  });
+
+  /// Xoá tin nhắn — đi qua BE (`POST /chat/delete-message`). ACS không xoá
+  /// vật lý mà soft-delete: tin vẫn nằm trong thread với field `deletedOn`.
+  Future<bool> deleteMessage({
+    required String roomId,
+    required String messageId,
+  });
+
   Future<PaginatedResult<MessageModel>> listMessages({
     required String roomId,
     required String threadId,

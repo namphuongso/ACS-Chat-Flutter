@@ -1,6 +1,7 @@
 // Widgets & Screens
 export 'core/chat_route_observer.dart';
 export 'core/widgets/offline_banner.dart';
+export 'core/widgets/search_field.dart';
 
 export 'features/conversation_list/presentation/screens/conversation_list_screen.dart';
 export 'features/thread/presentation/screens/thread_screen.dart';
@@ -9,6 +10,7 @@ export 'features/thread/presentation/widgets/message_input.dart';
 
 // Core
 export 'core/chat_route_observer.dart' show chatRouteObserver;
+export 'core/chat_ui_config.dart';
 
 // Providers & Notifiers
 export 'features/conversation_list/presentation/notifiers/conversation_list_notifier.dart';

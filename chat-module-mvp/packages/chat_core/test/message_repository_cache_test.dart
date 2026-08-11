@@ -38,6 +38,23 @@ class _MockRemote implements MessageRemoteDataSource {
   }
 
   @override
+  Future<bool> updateMessage({
+    required String roomId,
+    required String messageId,
+    required String content,
+  }) async {
+    return true;
+  }
+
+  @override
+  Future<bool> deleteMessage({
+    required String roomId,
+    required String messageId,
+  }) async {
+    return true;
+  }
+
+  @override
   Future<bool> pinMessage(String messageId, bool pin) async => true;
 
   @override
@@ -178,6 +195,31 @@ void main() {
       expect(sent.id, 'sent-hello');
       expect((await local.getCachedMessages('t1')).map((m) => m.id), [
         'sent-hello',
+      ]);
+    });
+
+    test('sendMessage tin mới nằm ĐẦU cache (cache theo thứ tự mới-nhất trước)',
+        () async {
+      final remote = _MockRemote();
+      final local = _MemoryLocal();
+      final repo = MessageRepositoryImpl(
+        remoteDataSource: remote,
+        realtimeDataSource: _MockRealtime(),
+        localDataSource: local,
+      );
+      await local.saveMessages('t1', [_message('old')]);
+
+      await repo.sendMessage(
+        roomId: 'r1',
+        threadId: 't1',
+        content: 'hello',
+      );
+
+      // Tin mới phải đứng trước tin cũ — trước đây append vào cuối làm cache
+      // đảo thứ tự, lần vào sau đọc cache render tin bị ngược rồi mới sửa.
+      expect((await local.getCachedMessages('t1')).map((m) => m.id), [
+        'sent-hello',
+        'old',
       ]);
     });
   });

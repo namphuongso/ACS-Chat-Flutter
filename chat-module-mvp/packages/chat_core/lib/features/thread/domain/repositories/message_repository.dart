@@ -11,6 +11,23 @@ abstract class MessageRepository {
     required String content,
   });
 
+  /// Sửa nội dung tin nhắn đã gửi — đi qua BE (`POST /chat/update-message`).
+  /// Chỉ chủ nhân tin nhắn mới được sửa.
+  Future<bool> updateMessage({
+    required String roomId,
+    required String threadId,
+    required String messageId,
+    required String content,
+  });
+
+  /// Xoá tin nhắn — đi qua BE (`POST /chat/delete-message`). ACS soft-delete
+  /// (gắn `deletedOn`) nên tin sẽ bị ẩn ở các lần load sau.
+  Future<bool> deleteMessage({
+    required String roomId,
+    required String threadId,
+    required String messageId,
+  });
+
   /// Load lịch sử / pagination — gọi thẳng ACS REST `listMessages`.
   /// [startTime] dùng để tránh lấy nguyên trang mỗi lần (mục 5 kế hoạch gốc).
   Future<PaginatedResult<Message>> listMessages({

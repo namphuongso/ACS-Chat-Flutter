@@ -1,9 +1,14 @@
+import 'dart:developer' as developer;
+
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../../../../core/widgets/offline_banner.dart';
+import '../../../../core/widgets/skeleton.dart';
 import '../../../../core/utils/avatar_utils.dart';
+import '../../../../core/chat_ui_config.dart';
 import '../../../conversation_list/presentation/providers/conversation_providers.dart';
 import '../providers/thread_providers.dart';
 import '../notifiers/thread_messages_notifier.dart';
@@ -71,61 +76,156 @@ class _ThreadScreenContent extends ConsumerStatefulWidget {
 }
 
 class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
-  final _scrollController = ScrollController();
+  final _itemScrollController = ItemScrollController();
+  final _itemPositionsListener = ItemPositionsListener.create();
   int _currentPinnedIndex = 0;
-  final Map<String, GlobalKey> _messageKeys = {};
 
-  void _scrollToMessage(String messageId, int index, List<Message> currentMessages) {
-    final estimatedPosition = (currentMessages.length - 1 - index) * 75.0;
-    _scrollController.animateTo(
-      estimatedPosition,
-      duration: const Duration(milliseconds: 150),
+  /// Nhảy tới đúng vị trí tin nhắn (banner tin ghim / danh sách tin ghim).
+  /// Dùng `ItemScrollController` để scroll chính xác theo [itemIndex] (index
+  /// trong builder, `reverse: true` → index 0 là tin mới nhất) — ListView
+  /// lazy trước đây phải ước lượng 75px/item + ensureVisible nên nhảy sai.
+  void _scrollToMessage(int itemIndex) {
+    if (!_itemScrollController.isAttached) return;
+    _itemScrollController.scrollTo(
+      index: itemIndex,
+      alignment: 0.5,
+      duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
-    ).then((_) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        final key = _messageKeys[messageId];
-        if (key?.currentContext != null) {
-          Scrollable.ensureVisible(
-            key!.currentContext!,
-            alignment: 1.0,
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeInOut,
-          );
-        }
-      });
-    });
+    );
+  }
+
+  /// Đang ở đáy danh sách tin nhắn (tin mới nhất index 0 đang hiển thị).
+  bool get _isAtBottom {
+    final positions = _itemPositionsListener.itemPositions.value;
+    return positions.any((p) => p.index == 0);
   }
 
   @override
   void dispose() {
-    _scrollController.dispose();
+    // Đóng bàn phím khi rời khỏi màn hình chat — trước đây back ra ngoài
+    // bàn phím vẫn hiện vì TextField bị dispose khiến FocusManager treo.
+    FocusManager.instance.primaryFocus?.unfocus();
     super.dispose();
   }
 
-  void _showMessageMenu(BuildContext context, Message message) {
+  void _showMessageMenu(BuildContext context, Message message,
+      {required bool canEdit, required Offset position}) {
     final messenger = ScaffoldMessenger.of(context);
-    showModalBottomSheet<void>(
+    final overlay =
+        Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final relative = RelativeRect.fromRect(
+      Rect.fromPoints(position, position),
+      Offset.zero & overlay.size,
+    );
+
+    showMenu<String>(
       context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(message.pin
-                  ? Icons.pin_drop_outlined
-                  : Icons.push_pin_outlined),
-              title: Text(message.pin ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'),
-              subtitle: Text(message.content,
-                  maxLines: 1, overflow: TextOverflow.ellipsis),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _togglePin(messenger, message.id, !message.pin);
-              },
+      position: relative,
+      items: [
+        if (canEdit)
+          const PopupMenuItem(
+            value: 'edit',
+            child: ListTile(
+              leading: Icon(Icons.edit_outlined),
+              title: Text('Sửa tin nhắn'),
+              contentPadding: EdgeInsets.zero,
             ),
-          ],
+          ),
+        PopupMenuItem(
+          value: 'pin',
+          child: ListTile(
+            leading: Icon(message.pin
+                ? Icons.pin_drop_outlined
+                : Icons.push_pin_outlined),
+            title: Text(message.pin ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'),
+            contentPadding: EdgeInsets.zero,
+          ),
         ),
+        if (canEdit)
+          const PopupMenuItem(
+            value: 'delete',
+            child: ListTile(
+              leading: Icon(Icons.delete_outline, color: Colors.red),
+              title: Text(
+                'Xoá tin nhắn',
+                style: TextStyle(color: Colors.red),
+              ),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+      ],
+    ).then((action) {
+      if (action == null || !context.mounted) return;
+      if (action == 'edit') {
+        _editMessage(context, message);
+      } else if (action == 'pin') {
+        _togglePin(messenger, message.id, !message.pin);
+      } else if (action == 'delete') {
+        _deleteMessage(context, message);
+      }
+    });
+  }
+
+  /// Xoá tin nhắn (chỉ tin của mình). Hỏi xác nhận trước khi xoá — sau khi
+  /// xoá thành công tin biến mất ngay (không cần refresh lại lịch sử).
+  Future<void> _deleteMessage(BuildContext context, Message message) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Xoá tin nhắn?'),
+        content: const Text(
+          'Tin nhắn này sẽ bị xoá cho tất cả mọi người trong cuộc trò chuyện.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Xoá'),
+          ),
+        ],
       ),
     );
+    if (confirmed != true || !mounted) return;
+
+    final ok = await ref
+        .read(threadMessagesProvider.notifier)
+        .deleteMessage(message.id);
+    if (!mounted) return;
+    messenger.showSnackBar(SnackBar(
+      content: Text(ok ? 'Đã xoá tin nhắn' : 'Không thể xoá tin nhắn'),
+      duration: const Duration(seconds: 1),
+    ));
+  }
+
+  /// Mở dialog sửa tin nhắn — người gửi mới được sửa tin của mình.
+  Future<void> _editMessage(BuildContext context, Message message) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    final newContent = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) =>
+          _EditMessageDialog(initialContent: message.content),
+    );
+
+    if (newContent == null ||
+        newContent.isEmpty ||
+        newContent == message.content) {
+      return;
+    }
+
+    final ok = await ref.read(threadMessagesProvider.notifier).updateMessage(
+          message.id,
+          newContent,
+        );
+    messenger.showSnackBar(SnackBar(
+      content: Text(ok ? 'Đã sửa tin nhắn' : 'Không thể sửa tin nhắn'),
+      duration: const Duration(seconds: 1),
+    ));
   }
 
   Future<void> _togglePin(
@@ -180,14 +280,20 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
           }
           return id;
         }
-        final isMsgMe = myId != null && myId.isNotEmpty && normalize(lastMsg.senderId) == normalize(myId);
-        final isSending = lastMsg.status == MessageDeliveryStatus.sending;
 
-        if (isMsgMe || isSending) {
+        final isMsgMe = myId != null &&
+            myId.isNotEmpty &&
+            normalize(lastMsg.senderId) == normalize(myId);
+        final isSending = lastMsg.status == MessageDeliveryStatus.sending;
+        // Tin của mình → luôn cuộn xuống đáy. Tin của người khác → chỉ cuộn
+        // khi đang ở gần đáy, không cướp vị trí đọc khi đang xem tin cũ.
+        final atBottom = _isAtBottom;
+
+        if ((isMsgMe || isSending) || atBottom) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_scrollController.hasClients) {
-              _scrollController.animateTo(
-                0.0,
+            if (_itemScrollController.isAttached) {
+              _itemScrollController.scrollTo(
+                index: 0,
                 duration: const Duration(milliseconds: 300),
                 curve: Curves.easeOut,
               );
@@ -233,7 +339,10 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
         } else if (isNetworkAvatar(roomAvatar)) {
           displayAvatar = roomAvatar;
         } else {
-          displayAvatar = widget.senderAvatarUrl;
+          displayAvatar =
+              isNetworkAvatar(widget.senderAvatarUrl)
+                  ? widget.senderAvatarUrl
+                  : null;
         }
       } else {
         if (isNetworkAvatar(roomAvatar)) {
@@ -241,7 +350,10 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
         } else if (isNetworkAvatar(otherAvatar)) {
           displayAvatar = otherAvatar;
         } else {
-          displayAvatar = widget.senderAvatarUrl;
+          displayAvatar =
+              isNetworkAvatar(widget.senderAvatarUrl)
+                  ? widget.senderAvatarUrl
+                  : null;
         }
       }
     } else {
@@ -255,15 +367,19 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
     if (_currentPinnedIndex >= pinnedMessages.length) {
       _currentPinnedIndex = 0;
     }
-    final pinnedMessage = pinnedMessages.isNotEmpty
-        ? pinnedMessages[_currentPinnedIndex]
-        : null;
+    final pinnedMessage =
+        pinnedMessages.isNotEmpty ? pinnedMessages[_currentPinnedIndex] : null;
+
+    final theme = Theme.of(context);
+    final chatConfig = ref.watch(chatUiConfigProvider);
 
     return Scaffold(
+      backgroundColor: chatConfig.roomBackgroundColor,
       appBar: AppBar(
         // Không cho Material 3 tint appbar khi content scroll qua bên dưới.
         scrolledUnderElevation: 0,
         surfaceTintColor: Colors.transparent,
+        backgroundColor: chatConfig.appBarBackgroundColor,
         titleSpacing: 0,
         title: Row(
           children: [
@@ -294,19 +410,22 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.phone),
+            icon: Icon(Icons.phone,
+                color: chatConfig.iconColor ?? theme.iconTheme.color),
             onPressed: () {
               // Action call UI
             },
           ),
           IconButton(
-            icon: const Icon(Icons.videocam),
+            icon: Icon(Icons.videocam,
+                color: chatConfig.iconColor ?? theme.iconTheme.color),
             onPressed: () {
               // Action callvideo UI
             },
           ),
           IconButton(
-            icon: const Icon(Icons.info_outline),
+            icon: Icon(Icons.info_outline,
+                color: chatConfig.iconColor ?? theme.iconTheme.color),
             onPressed: () {
               // Action info UI
             },
@@ -322,7 +441,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                 final id = pinnedMessage.messageId;
                 final index = messages.indexWhere((m) => m.id == id);
                 if (index != -1) {
-                  _scrollToMessage(id, index, messages);
+                  _scrollToMessage(messages.length - 1 - index);
                 } else {
                   final messenger = ScaffoldMessenger.of(context);
                   messenger.showSnackBar(
@@ -334,9 +453,10 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                   final found = await notifier.loadUntilMessage(messageId: id);
                   if (found) {
                     final newMessages = ref.read(threadMessagesProvider);
-                    final newIndex = newMessages.indexWhere((m) => m.id == id);
+                    final newIndex =
+                        newMessages.indexWhere((m) => m.id == id);
                     if (newIndex != -1) {
-                      _scrollToMessage(id, newIndex, newMessages);
+                      _scrollToMessage(newMessages.length - 1 - newIndex);
                     }
                   } else {
                     messenger.showSnackBar(
@@ -380,7 +500,8 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                       IconButton(
                         constraints: const BoxConstraints(),
                         padding: EdgeInsets.zero,
-                        icon: const Icon(Icons.list, size: 20, color: Colors.orange),
+                        icon: const Icon(Icons.list,
+                            size: 20, color: Colors.orange),
                         onPressed: () {
                           _showPinnedMessagesList(
                             context,
@@ -400,9 +521,11 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
             ),
           Expanded(
             child: isLoading
-                ? const Center(child: CircularProgressIndicator())
+                ? const MessageListSkeleton()
                 : messages.isEmpty
-                    ? const Center(child: Text('Chưa có tin nhắn nào'))
+                    ? const Center(
+                        child:
+                            Text('Chưa có tin nhắn — hãy bắt đầu trò chuyện!'))
                     : NotificationListener<ScrollNotification>(
                         onNotification: (notification) {
                           if (notification.metrics.extentAfter < 200) {
@@ -410,8 +533,9 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                           }
                           return false;
                         },
-                        child: ListView.builder(
-                          controller: _scrollController,
+                        child: ScrollablePositionedList.builder(
+                          itemScrollController: _itemScrollController,
+                          itemPositionsListener: _itemPositionsListener,
                           reverse: true,
                           itemCount: messages.length +
                               (notifier.isLoadingOlder ? 1 : 0),
@@ -445,7 +569,8 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                               senderMember = conversation.participants
                                   .where((p) =>
                                       p.acsUserId != null &&
-                                      normalizeAcsId(p.acsUserId!) == normSender)
+                                      normalizeAcsId(p.acsUserId!) ==
+                                          normSender)
                                   .firstOrNull;
                             }
 
@@ -455,38 +580,59 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                             if (senderMember != null) {
                               isMe = senderMember.id == widget.currentUserId;
                               if (!isMe) {
-                                senderAvatar = isNetworkAvatar(senderMember.avatarUrl)
-                                    ? senderMember.avatarUrl
-                                    : widget.senderAvatarUrl;
+                                senderAvatar =
+                                    isNetworkAvatar(senderMember.avatarUrl)
+                                        ? senderMember.avatarUrl
+                                        : widget.senderAvatarUrl;
                               }
                             } else {
                               isMe = myId != null && myId.isNotEmpty
                                   ? normSender == normalizeAcsId(myId)
                                   : false;
-                              senderAvatar = isMe ? null : widget.senderAvatarUrl;
+                              senderAvatar =
+                                  isMe ? null : widget.senderAvatarUrl;
+                            }
+
+                            if (index == 0 && message.id.isNotEmpty) {
+                              final dbg = StringBuffer()
+                                ..write('room=$roomId')
+                                ..write(' senderId=${message.senderId}')
+                                ..write(' normSender=$normSender')
+                                ..write(' myId=$myId')
+                                ..write(' currentUserId=${widget.currentUserId}')
+                                ..write(' senderMemberId=${senderMember?.id}')
+                                ..write(' senderMemberCui=${senderMember?.acsUserId}')
+                                ..write(' participants=${conversation?.participants.map((p) => '${p.id}|${p.acsUserId}').join(',')}')
+                                ..write(' isMe=$isMe')
+                                ..write(' convFound=${conversation != null}');
+                              developer.log('thread-screen-isMe $dbg',
+                                  name: 'ChatModule');
                             }
 
                             // ListView reverse: index càng nhỏ tin càng mới.
                             // Tin liền trước về thời gian là messages[index+1].
                             // Chuỗi tin liên tiếp cùng 1 người → chỉ tin
                             // đầu tiên (cũ nhất) hiện avatar, các tin sau ẩn.
-                            final bool isFollowUpOfSameSender = index + 1 < messages.length &&
+                            final bool isFollowUpOfSameSender = index + 1 <
+                                    messages.length &&
                                 normSender.isNotEmpty &&
                                 normSender ==
-                                    normalizeAcsId(
-                                        messages[messages.length - 1 - (index + 1)]
-                                            .senderId);
+                                    normalizeAcsId(messages[
+                                            messages.length - 1 - (index + 1)]
+                                        .senderId);
 
-                            final messageKey = _messageKeys.putIfAbsent(
-                                message.id, () => GlobalKey());
                             return MessageBubble(
-                              key: messageKey,
+                              key: ValueKey(message.id),
                               message: message,
                               isMe: isMe,
                               senderAvatarUrl: senderAvatar,
                               showSenderAvatar: !isFollowUpOfSameSender,
-                              onLongPress: () =>
-                                  _showMessageMenu(context, message),
+                              onLongPressStart: (details) => _showMessageMenu(
+                                context,
+                                message,
+                                canEdit: isMe,
+                                position: details.globalPosition,
+                              ),
                             );
                           },
                         ),
@@ -551,13 +697,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                         final id = p.messageId;
                         final msgIndex = messages.indexWhere((m) => m.id == id);
                         if (msgIndex != -1) {
-                          final position =
-                              (messages.length - 1 - msgIndex) * 75.0;
-                          _scrollController.animateTo(
-                            position,
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeInOut,
-                          );
+                          _scrollToMessage(messages.length - 1 - msgIndex);
                         } else {
                           final messenger = ScaffoldMessenger.of(context);
                           messenger.showSnackBar(
@@ -569,23 +709,19 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                           final found =
                               await notifier.loadUntilMessage(messageId: id);
                           if (found) {
-                            final newMessages = ref.read(threadMessagesProvider);
+                            final newMessages =
+                                ref.read(threadMessagesProvider);
                             final newIndex =
                                 newMessages.indexWhere((m) => m.id == id);
                             if (newIndex != -1) {
-                              final position =
-                                  (newMessages.length - 1 - newIndex) * 75.0;
-                              _scrollController.animateTo(
-                                position,
-                                duration: const Duration(milliseconds: 300),
-                                curve: Curves.easeInOut,
-                              );
+                              _scrollToMessage(
+                                  newMessages.length - 1 - newIndex);
                             }
                           } else {
                             messenger.showSnackBar(
                               const SnackBar(
-                                content:
-                                    Text('Không tìm thấy tin nhắn hoặc đã bị xóa'),
+                                content: Text(
+                                    'Không tìm thấy tin nhắn hoặc đã bị xóa'),
                               ),
                             );
                           }
@@ -599,6 +735,58 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
           ),
         );
       },
+    );
+  }
+}
+
+class _EditMessageDialog extends StatefulWidget {
+  const _EditMessageDialog({required this.initialContent});
+
+  final String initialContent;
+
+  @override
+  State<_EditMessageDialog> createState() => _EditMessageDialogState();
+}
+
+class _EditMessageDialogState extends State<_EditMessageDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialContent);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Sửa tin nhắn'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        minLines: 1,
+        maxLines: 5,
+        decoration: const InputDecoration(
+          hintText: 'Nội dung tin nhắn...',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Hủy'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, _controller.text.trim()),
+          child: const Text('Lưu'),
+        ),
+      ],
     );
   }
 }

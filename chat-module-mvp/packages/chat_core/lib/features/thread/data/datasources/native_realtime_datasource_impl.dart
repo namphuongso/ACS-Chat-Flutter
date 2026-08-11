@@ -54,7 +54,10 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
       senderDisplayName: event.senderDisplayName,
       content: event.content,
       type: MessageType.text,
-      createdAt: DateTime.parse(event.createdAtIso8601),
+      createdAt: DateTime.parse(event.createdAtIso8601).toLocal(),
+      deletedOn: event.deletedOnIso8601 != null
+          ? DateTime.parse(event.deletedOnIso8601!).toLocal()
+          : null,
     );
 
     final threadController = _threadControllers[event.threadId];

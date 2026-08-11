@@ -12,6 +12,7 @@ class MessageModel extends Message {
     super.status = MessageDeliveryStatus.sent,
     super.metadata,
     super.pin = false,
+    super.deletedOn,
   });
 
   factory MessageModel.fromAcsJson(Map<String, dynamic> json,
@@ -36,8 +37,11 @@ class MessageModel extends Message {
           : json['content'] as String? ?? '',
       type: MessageType.fromString(json['type'] as String? ?? 'text'),
       createdAt: DateTime.parse(json['createdOn'] as String? ??
-          json['createdAt'] as String? ??
-          DateTime.now().toIso8601String()),
+              json['createdAt'] as String? ??
+              DateTime.now().toIso8601String()).toLocal(),
+      deletedOn: json['deletedOn'] != null
+          ? DateTime.parse(json['deletedOn'] as String).toLocal()
+          : null,
       metadata: (json['metadata'] as Map?)?.cast<String, String>(),
     );
   }

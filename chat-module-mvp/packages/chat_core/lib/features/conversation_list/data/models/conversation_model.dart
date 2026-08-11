@@ -16,7 +16,7 @@ class ConversationSummaryModel extends ConversationSummary {
       senderDisplayName:
           (map['sender'] as Map<String, dynamic>?)?['displayName'] as String? ??
               '',
-      createdAt: DateTime.parse(map['createdAt'] as String),
+      createdAt: DateTime.parse(map['createdAt'] as String).toLocal(),
     );
   }
 }
@@ -52,10 +52,10 @@ class ConversationModel extends Conversation {
       participants: ((json['participants'] as List?) ?? [])
           .map((e) => ChatUserModel.fromJson(e as Map<String, dynamic>))
           .toList(),
-      createdAt: DateTime.parse(json['created'] as String),
+      createdAt: DateTime.parse(json['created'] as String).toLocal(),
       updatedAt: json['modified'] != null
-          ? DateTime.parse(json['modified'] as String)
-          : DateTime.parse(json['created'] as String),
+          ? DateTime.parse(json['modified'] as String).toLocal()
+          : DateTime.parse(json['created'] as String).toLocal(),
       roomName: json['roomName'] as String? ?? '',
       avatarUrl: json['avatarUrl'] as String?,
       pid: json['pid'] as String?,
@@ -67,8 +67,8 @@ class ConversationModel extends Conversation {
           ? _summaryFromRaw(
               raw: json['lastMessage'] as String,
               createdAt: json['lastMessageTime'] != null
-                  ? DateTime.parse(json['lastMessageTime'] as String)
-                  : DateTime.parse(json['created'] as String),
+                  ? DateTime.parse(json['lastMessageTime'] as String).toLocal()
+                  : DateTime.parse(json['created'] as String).toLocal(),
             )
           : null,
     );

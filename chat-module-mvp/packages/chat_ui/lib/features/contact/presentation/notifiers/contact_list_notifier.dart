@@ -56,16 +56,20 @@ class ContactListNotifier extends Notifier<ContactListState> {
   Future<void> loadContacts() async {
     if (state.isLoading) return;
 
+    // Giữ keyword tại thời điểm bắt đầu — khi trả về mà keyword đã đổi (user
+    // gõ tiếp, debounce lại gọi search mới) thì bỏ kết quả cũ để không hiện
+    // danh sách sai với ô tìm kiếm.
+    final requested = state.keyword;
     state = state.copyWith(
         isLoading: true, error: null, pageIndex: 1, hasMore: true);
 
     try {
       final result = await _searchContactsUseCase(
-        keyword: state.keyword,
+        keyword: requested,
         pageIndex: 1,
       );
 
-      if (!ref.mounted) return;
+      if (!ref.mounted || state.keyword != requested) return;
       state = state.copyWith(
         contacts: result.items,
         isLoading: false,
@@ -73,7 +77,7 @@ class ContactListNotifier extends Notifier<ContactListState> {
         pageIndex: 2,
       );
     } catch (e) {
-      if (!ref.mounted) return;
+      if (!ref.mounted || state.keyword != requested) return;
       state = state.copyWith(isLoading: false, error: e.toString());
     }
   }
@@ -81,15 +85,16 @@ class ContactListNotifier extends Notifier<ContactListState> {
   Future<void> loadMore() async {
     if (state.isLoading || state.isLoadingMore || !state.hasMore) return;
 
+    final requested = state.keyword;
     state = state.copyWith(isLoadingMore: true, error: null);
 
     try {
       final result = await _searchContactsUseCase(
-        keyword: state.keyword,
+        keyword: requested,
         pageIndex: state.pageIndex,
       );
 
-      if (!ref.mounted) return;
+      if (!ref.mounted || state.keyword != requested) return;
 
       final existingIds = state.contacts.map((c) => c.id).toSet();
       final newItems =
@@ -109,7 +114,7 @@ class ContactListNotifier extends Notifier<ContactListState> {
         );
       }
     } catch (e) {
-      if (!ref.mounted) return;
+      if (!ref.mounted || state.keyword != requested) return;
       state = state.copyWith(isLoadingMore: false, error: e.toString());
     }
   }

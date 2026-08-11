@@ -28,6 +28,8 @@ export 'features/thread/domain/usecases/get_pinned_messages_usecase.dart';
 export 'features/thread/domain/usecases/list_messages_usecase.dart';
 export 'features/thread/domain/usecases/pin_message_usecase.dart';
 export 'features/thread/domain/usecases/send_message_usecase.dart';
+export 'features/thread/domain/usecases/update_message_usecase.dart';
+export 'features/thread/domain/usecases/delete_message_usecase.dart';
 export 'features/thread/domain/usecases/stop_watching_messages_usecase.dart';
 export 'features/thread/domain/usecases/stop_watching_list_messages_usecase.dart';
 export 'features/thread/domain/usecases/watch_list_messages_usecase.dart';

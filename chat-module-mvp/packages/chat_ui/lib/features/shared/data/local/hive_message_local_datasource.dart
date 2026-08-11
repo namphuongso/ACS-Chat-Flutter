@@ -74,6 +74,7 @@ class HiveMessageLocalDataSource implements MessageLocalDataSource {
         'status': m.status.name,
         'metadata': m.metadata,
         'pin': m.pin,
+        'deletedOn': m.deletedOn?.toIso8601String(),
       };
 
   Message _messageFromJson(Map<String, dynamic> j) => Message(
@@ -83,11 +84,14 @@ class HiveMessageLocalDataSource implements MessageLocalDataSource {
         senderDisplayName: j['senderDisplayName'] as String? ?? '',
         content: j['content'] as String? ?? '',
         type: MessageType.fromString(j['type'] as String? ?? 'text'),
-        createdAt: DateTime.parse(j['createdAt'] as String),
+        createdAt: DateTime.parse(j['createdAt'] as String).toLocal(),
         status:
             MessageDeliveryStatus.values.asNameMap()[j['status'] as String?] ??
                 MessageDeliveryStatus.sent,
         metadata: (j['metadata'] as Map?)?.cast<String, String>(),
         pin: j['pin'] as bool? ?? false,
+        deletedOn: j['deletedOn'] != null
+            ? DateTime.parse(j['deletedOn'] as String).toLocal()
+            : null,
       );
 }

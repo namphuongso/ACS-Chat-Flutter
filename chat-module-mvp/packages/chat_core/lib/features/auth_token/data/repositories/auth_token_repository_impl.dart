@@ -18,8 +18,13 @@ class AuthTokenRepositoryImpl implements AuthTokenRepository {
     if (cached != null && !cached.needsRefresh) {
       return Future.value(cached);
     }
-    return _inFlight[roomId] ??=
-        _refresh(roomId).whenComplete(() => _inFlight.remove(roomId));
+    // LƯU Ý: callback phải là block body (trả void). Trước đây
+    // `whenComplete(() => _inFlight.remove(roomId))` trả về CHÍNH cái future
+    // đang được hoàn thành (self-reference) → future kẹt vĩnh viễn, join-room
+    // trả 200 nhưng không ai nhận được token → myAcsUserId mãi null, tin nhắn
+    // render sai phía / loading 20s mới báo lỗi, back ra vô lại mới đúng.
+    return _inFlight[roomId] ??= _refresh(roomId)
+        .whenComplete(() { _inFlight.remove(roomId); });
   }
 
   @override

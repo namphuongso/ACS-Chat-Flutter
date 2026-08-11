@@ -11,6 +11,7 @@ class NativeChatMessageEvent {
     required this.senderDisplayName,
     required this.content,
     required this.createdAtIso8601,
+    this.deletedOnIso8601,
   });
 
   final String threadId;
@@ -20,6 +21,10 @@ class NativeChatMessageEvent {
   final String content;
   final String createdAtIso8601;
 
+  /// Thời điểm tin bị xoá trên ACS (soft-delete). Có giá trị khi native nhận
+  /// được event xoá tin nhắn — dùng để ẩn tin khỏi UI.
+  final String? deletedOnIso8601;
+
   factory NativeChatMessageEvent.fromMap(Map<dynamic, dynamic> map) {
     return NativeChatMessageEvent(
       threadId: map['threadId'] as String,
@@ -28,6 +33,7 @@ class NativeChatMessageEvent {
       senderDisplayName: map['senderDisplayName'] as String,
       content: map['content'] as String,
       createdAtIso8601: map['createdAt'] as String,
+      deletedOnIso8601: map['deletedOn'] as String?,
     );
   }
 }
