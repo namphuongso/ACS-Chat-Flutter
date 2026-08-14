@@ -2,9 +2,12 @@
 export 'core/config/chat_module_config.dart';
 export 'core/constants/chat_api_endpoints.dart';
 export 'core/data/models/chat_user_model.dart';
+export 'core/data/models/chat_member_model.dart';
 export 'core/domain/entities/chat_user.dart';
+export 'core/domain/entities/chat_member.dart';
 export 'core/error/chat_api_exception.dart';
 export 'core/network/json_api_client.dart';
+export 'core/utils/chat_logger.dart';
 
 // Domain & Entities
 export 'features/auth_token/domain/entities/chat_access_token.dart';
@@ -15,6 +18,7 @@ export 'features/conversation_list/domain/repositories/conversation_repository.d
 export 'features/read_status/domain/repositories/read_status_repository.dart';
 export 'features/thread/domain/entities/message.dart';
 export 'features/thread/domain/entities/pinned_message.dart';
+export 'features/thread/domain/entities/message_reaction.dart';
 export 'features/thread/domain/repositories/message_repository.dart';
 
 // Use Cases
@@ -23,6 +27,15 @@ export 'features/conversation_list/domain/usecases/get_conversation_usecase.dart
 export 'features/conversation_list/domain/usecases/get_or_create_direct_conversation_usecase.dart';
 export 'features/conversation_list/domain/usecases/list_conversations_usecase.dart';
 export 'features/conversation_list/domain/usecases/pin_conversation_usecase.dart';
+export 'features/conversation_list/domain/usecases/create_group_conversation_usecase.dart';
+export 'features/conversation_list/domain/usecases/get_members_usecase.dart';
+export 'features/conversation_list/domain/usecases/update_room_info_usecase.dart';
+export 'features/conversation_list/domain/usecases/upload_room_avatar_usecase.dart';
+export 'features/conversation_list/domain/usecases/upload_file_via_sas_usecase.dart';
+export 'features/conversation_list/domain/usecases/add_participants_usecase.dart';
+export 'features/conversation_list/domain/usecases/remove_participants_usecase.dart';
+export 'features/conversation_list/domain/usecases/transfer_ownership_usecase.dart';
+export 'features/conversation_list/domain/usecases/leave_room_usecase.dart';
 export 'features/read_status/domain/usecases/mark_as_read_usecase.dart';
 export 'features/thread/domain/usecases/get_pinned_messages_usecase.dart';
 export 'features/thread/domain/usecases/list_messages_usecase.dart';

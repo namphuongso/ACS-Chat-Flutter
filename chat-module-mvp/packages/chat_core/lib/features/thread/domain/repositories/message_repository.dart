@@ -1,6 +1,7 @@
 import '../../../conversation_list/domain/entities/conversation.dart';
 import '../entities/message.dart';
 import '../entities/pinned_message.dart';
+import '../entities/message_reaction.dart';
 
 abstract class MessageRepository {
   /// Gửi tin nhắn — đi qua BE (`POST /chat/send-message`), BE chịu trách
@@ -9,6 +10,7 @@ abstract class MessageRepository {
     required String roomId,
     required String threadId,
     required String content,
+    Map<String, dynamic>? metaData,
   });
 
   /// Sửa nội dung tin nhắn đã gửi — đi qua BE (`POST /chat/update-message`).
@@ -51,6 +53,22 @@ abstract class MessageRepository {
   /// Danh sách tin đang ghim của room — BE. Mọi user trong room cùng nhìn
   /// thấy tin ghim (ACS không mang thông tin này).
   Future<List<PinnedMessage>> getPinnedMessages(String roomId);
+
+  Future<List<ReactionConfig>> getReactionConfigs();
+
+  Future<List<MessageReaction>> getMessageReactions({
+    required String roomId,
+    required String messageId,
+  });
+
+  Future<List<MessageReactionSummary>> getRoomReactions(String roomId);
+
+  Future<bool> reactMessage({
+    required String roomId,
+    required String threadId,
+    required String messageId,
+    required String reactionCode,
+  });
 
   /// Nhận tin nhắn mới. Bản REST implement bằng polling (Giai đoạn 1,
   /// KHÔNG đạt UX Messenger/Zalo — chỉ dùng bước đệm). Bản native

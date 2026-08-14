@@ -88,7 +88,7 @@ class HiveMessageLocalDataSource implements MessageLocalDataSource {
         status:
             MessageDeliveryStatus.values.asNameMap()[j['status'] as String?] ??
                 MessageDeliveryStatus.sent,
-        metadata: (j['metadata'] as Map?)?.cast<String, String>(),
+        metadata: (j['metadata'] as Map?)?.cast<String, dynamic>(),
         pin: j['pin'] as bool? ?? false,
         deletedOn: j['deletedOn'] != null
             ? DateTime.parse(j['deletedOn'] as String).toLocal()

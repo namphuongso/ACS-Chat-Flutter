@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../../conversation_list/domain/entities/conversation.dart';
 import '../../domain/entities/message.dart';
 import '../../domain/entities/pinned_message.dart';
+import '../../domain/entities/message_reaction.dart';
 import '../../domain/repositories/message_repository.dart';
 import '../datasources/message_local_datasource.dart';
 import '../datasources/message_remote_datasource.dart';
@@ -32,9 +33,10 @@ class MessageRepositoryImpl implements MessageRepository {
     required String roomId,
     required String threadId,
     required String content,
+    Map<String, dynamic>? metaData,
   }) async {
     final message = await _remote.sendMessage(
-        roomId: roomId, threadId: threadId, content: content);
+        roomId: roomId, threadId: threadId, content: content, metaData: metaData);
     await _appendToCache(threadId, message);
     return message;
   }
@@ -208,6 +210,35 @@ class MessageRepositoryImpl implements MessageRepository {
   @override
   Future<List<PinnedMessage>> getPinnedMessages(String roomId) =>
       _remote.getPinnedMessages(roomId);
+
+  @override
+  Future<List<ReactionConfig>> getReactionConfigs() =>
+      _remote.getReactionConfigs();
+
+  @override
+  Future<List<MessageReaction>> getMessageReactions({
+    required String roomId,
+    required String messageId,
+  }) =>
+      _remote.getMessageReactions(roomId: roomId, messageId: messageId);
+
+  @override
+  Future<List<MessageReactionSummary>> getRoomReactions(String roomId) =>
+      _remote.getRoomReactions(roomId);
+
+  @override
+  Future<bool> reactMessage({
+    required String roomId,
+    required String threadId,
+    required String messageId,
+    required String reactionCode,
+  }) =>
+      _remote.reactMessage(
+        roomId: roomId,
+        threadId: threadId,
+        messageId: messageId,
+        reactionCode: reactionCode,
+      );
 
   @override
   Stream<Message> watchNewMessages(String roomId, String threadId) {

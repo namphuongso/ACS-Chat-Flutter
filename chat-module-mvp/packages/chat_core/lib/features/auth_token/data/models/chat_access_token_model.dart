@@ -1,4 +1,4 @@
-import '../../../../core/data/models/chat_user_model.dart';
+import '../../../../core/data/models/chat_member_model.dart';
 import '../../domain/entities/chat_access_token.dart';
 
 class ChatAccessTokenModel extends ChatAccessToken {
@@ -13,9 +13,10 @@ class ChatAccessTokenModel extends ChatAccessToken {
     final membersJson = json['members'] as List?;
     final members = membersJson != null
         ? membersJson
-            .map((m) => ChatUserModel.fromJson(m as Map<String, dynamic>))
+            .whereType<Map>()
+            .map((m) => ChatMemberModel.fromJson(m.cast<String, dynamic>()))
             .toList()
-        : const <ChatUserModel>[];
+        : const <ChatMemberModel>[];
 
     return ChatAccessTokenModel(
       token: json['token'] as String,

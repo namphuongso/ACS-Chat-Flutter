@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:io';
+import 'dart:ui' show instantiateImageCodec;
 
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -37,8 +39,74 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
   /// Tin đang ghim của room lấy từ BE — mọi user trong room đều thấy
   /// (ACS không mang thông tin ghim). Rỗng nếu chưa có ghim / BE lỗi.
   List<PinnedMessage> _pinned = const [];
+  List<ReactionConfig>? _reactionConfigs;
+  Map<String, MessageReactionSummary> _reactionSummaries = const {};
 
   List<PinnedMessage> get pinnedMessages => _pinned;
+
+  MessageReactionSummary? reactionSummaryFor(String messageId) =>
+      _reactionSummaries[messageId];
+
+  Future<List<ReactionConfig>> getReactionConfigs() async {
+    final cached = _reactionConfigs;
+    if (cached != null) return cached;
+    final configs = await _messageRepository.getReactionConfigs();
+    _reactionConfigs = configs;
+    return configs;
+  }
+
+  Future<List<MessageReaction>> getMessageReactions(String messageId) =>
+      _messageRepository.getMessageReactions(
+        roomId: roomId,
+        messageId: messageId,
+      );
+
+  Future<bool> reactMessage(String messageId, String reactionCode) async {
+    final ok = await _messageRepository.reactMessage(
+        roomId: roomId,
+        threadId: threadId,
+        messageId: messageId,
+        reactionCode: reactionCode,
+      );
+    if (ok) await refreshReactions();
+    return ok;
+  }
+
+  Future<void> refreshReactions() async {
+    try {
+      final configs = await getReactionConfigs();
+      final summaries = await _messageRepository.getRoomReactions(roomId);
+      if (!ref.mounted) return;
+      final map = <String, MessageReactionSummary>{};
+      for (final s in summaries) {
+        var myIcon = s.myReactionIconUrl;
+        var previewIcon = s.previewIconUrl;
+        if ((myIcon == null || myIcon.isEmpty) && s.myReactionCode != null) {
+          final matched =
+              configs.where((c) => c.code == s.myReactionCode).firstOrNull;
+          if (matched != null && matched.iconUrl.isNotEmpty) {
+            myIcon = matched.iconUrl;
+          }
+        }
+        if (previewIcon == null || previewIcon.isEmpty) {
+          previewIcon = myIcon;
+        }
+        if ((previewIcon == null || previewIcon.isEmpty) &&
+            configs.isNotEmpty) {
+          previewIcon = configs.first.iconUrl;
+        }
+        map[s.messageId] = MessageReactionSummary(
+          messageId: s.messageId,
+          totalReactions: s.totalReactions,
+          myReactionCode: s.myReactionCode,
+          myReactionIconUrl: myIcon,
+          previewIconUrl: previewIcon,
+        );
+      }
+      _reactionSummaries = map;
+      state = [...state];
+    } catch (_) {}
+  }
 
   @override
   List<Message> build() {
@@ -88,6 +156,10 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
     }
 
     _realtimeSub = _watchNewMessagesUseCase(roomId, threadId).listen((message) {
+      if (message.type == MessageType.reactionUpdate) {
+        unawaited(refreshReactions());
+        return;
+      }
       // Tin bị xoá (soft-delete ACS): đánh dấu deletedOn thay vì loại khỏi
       // danh sách — UI hiển thị placeholder "(tin nhắn đã bị xoá)".
       if (message.isDeleted) {
@@ -102,11 +174,19 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
       // Echo của chính tin mình đang gửi dở (optimistic chưa có id thật từ
       // server): thay optimistic bằng tin thật thay vì thêm bản trùng →
       // tránh "lật/giật" do xuất hiện 2 tin giống nhau rồi cuộn lại.
-      final pending = state.where((m) =>
-          m.status == MessageDeliveryStatus.sending &&
-          m.content == message.content).firstOrNull;
+      final pending = state
+          .where((m) =>
+              m.status == MessageDeliveryStatus.sending &&
+              m.content == message.content)
+          .firstOrNull;
       if (pending != null) {
-        state = state.map((m) => m.id == pending.id ? message : m).toList();
+        final mergedMessage =
+            (message.metadata == null || message.metadata!.isEmpty) &&
+                    pending.metadata != null
+                ? message.copyWith(metadata: pending.metadata)
+                : message;
+        state =
+            state.map((m) => m.id == pending.id ? mergedMessage : m).toList();
         return;
       }
       // Chèn đúng vị trí theo thời gian để giữ list tăng dần — không sort lại
@@ -120,6 +200,10 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         list.insert(insertAt, message);
       }
       state = list;
+
+      if (message.metadata == null || message.metadata!.isEmpty) {
+        unawaited(_enrichMessageMetadata(message.id));
+      }
     });
 
     ref.onDispose(() {
@@ -128,7 +212,32 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
     });
 
     unawaited(_loadHistory());
+    unawaited(refreshReactions());
     return const [];
+  }
+
+  /// Khi nhận event realtime NewMessage từ backend nhưng thiếu metadata (do payload
+  /// WebSocket không chứa field Metadata), tự động gọi API lấy lại metadata để
+  /// hiển thị ảnh/file ngay trên máy người nhận mà không cần thoát ra vào lại phòng.
+  Future<void> _enrichMessageMetadata(String messageId) async {
+    try {
+      final page =
+          await _listMessagesUseCase(roomId: roomId, threadId: threadId);
+      final fullMsg = page.items.where((m) => m.id == messageId).firstOrNull;
+      if (fullMsg != null &&
+          fullMsg.metadata != null &&
+          fullMsg.metadata!.isNotEmpty) {
+        state = state.map((m) {
+          if (m.id == messageId) {
+            return m.copyWith(metadata: fullMsg.metadata);
+          }
+          return m;
+        }).toList();
+      }
+    } catch (e, st) {
+      developer.log('Enrich message metadata failed for $messageId',
+          error: e, stackTrace: st);
+    }
   }
 
   /// Cache-first: hiện tin đã lưu ngay lập tức, sau đó refresh từ remote
@@ -145,8 +254,7 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
     //    đầu, không kẹt spinner chờ join-room.
     if (myAcsUserId == null) {
       try {
-        final saved =
-            await _identityStore.getMyAcsUserId(currentUserId);
+        final saved = await _identityStore.getMyAcsUserId(currentUserId);
         if (ref.mounted && saved != null && saved.isNotEmpty) {
           myAcsUserId = saved;
         }
@@ -172,7 +280,8 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
           .timeout(const Duration(seconds: 20));
       if (ref.mounted) {
         myAcsUserId = token.acsUserId;
-        developer.log('myAcsUserId set from join-room: $myAcsUserId '
+        developer.log(
+            'myAcsUserId set from join-room: $myAcsUserId '
             'participants=${token.participants.length} '
             'room=$roomId',
             name: 'ChatModule');
@@ -206,9 +315,8 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
       // API chưa kịp trả) — trước đây replace toàn bộ bằng remote làm tin vừa
       // gửi biến mất rồi hiện lại qua realtime → cảm giác "lật ngược tin".
       final remoteIds = remoteItems.map((m) => m.id).toSet();
-      final localExtras = state
-          .where((m) => !remoteIds.contains(m.id))
-          .toList();
+      final localExtras =
+          state.where((m) => !remoteIds.contains(m.id)).toList();
       final mergedItems = remoteItems.map((remoteMsg) {
         final localMsg = state.where((m) => m.id == remoteMsg.id).firstOrNull;
         if (localMsg != null && localMsg.pin) {
@@ -258,12 +366,9 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
       if (!ref.mounted) return;
       _pinned = pinned;
       final pinnedIds = <String>{for (final p in pinned) p.messageId};
-      if (pinnedIds.isNotEmpty) {
-        state = [
-          for (final m in state)
-            if (pinnedIds.contains(m.id)) m.copyWith(pin: true) else m,
-        ];
-      }
+      state = [
+        for (final m in state) m.copyWith(pin: pinnedIds.contains(m.id)),
+      ];
     } catch (_) {
       // BE lỗi / offline — giữ nguyên, banner chỉ là tin đã ghim local.
     }
@@ -304,6 +409,51 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
 
   bool get historyLoaded => _historyLoaded;
 
+  /// Tải lại trang tin mới nhất sau khi quay về từ màn hình quản lý phòng.
+  /// Native realtime hiện chưa forward event participantAdded/Removed.
+  Future<void> refreshLatest() async {
+    try {
+      final result =
+          await _listMessagesUseCase(roomId: roomId, threadId: threadId);
+      if (!ref.mounted) return;
+      final byId = <String, Message>{
+        for (final message in state) message.id: message,
+      };
+      for (final message in result.items) {
+        if (message.type == MessageType.system &&
+            byId.values.any((old) =>
+                old.type == MessageType.system &&
+                old.content == message.content &&
+                old.createdAt.difference(message.createdAt).abs() <
+                    const Duration(minutes: 2))) {
+          continue;
+        }
+        final old = byId[message.id];
+        byId[message.id] =
+            old != null && old.pin ? message.copyWith(pin: true) : message;
+      }
+      state = _chronological(byId.values);
+      _cursor = result.cursor;
+      _hasMore = result.hasMore;
+    } catch (e, st) {
+      developer.log('Error refreshing latest messages',
+          name: 'ChatModule', error: e, stackTrace: st);
+    }
+  }
+
+  void addSystemMessage(String content) {
+    final message = Message(
+      id: 'local-system-${DateTime.now().microsecondsSinceEpoch}',
+      threadId: threadId,
+      senderId: '',
+      senderDisplayName: '',
+      content: content,
+      type: MessageType.system,
+      createdAt: DateTime.now(),
+    );
+    state = _chronological([...state, message]);
+  }
+
   /// Sắp xếp theo thời gian tăng dần (cũ → mới) — thứ tự display chuẩn của
   /// `state` (ListView reverse: index nhỏ = tin cũ). KHÔNG phụ thuộc thứ tự
   /// lưu cache: trước đây cache đọc ra rồi `.reversed` — nếu thứ tự lưu bị
@@ -315,7 +465,10 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
     return list;
   }
 
-  Future<void> sendMessage(String content) async {
+  Future<void> sendMessage(
+    String content, {
+    Map<String, dynamic>? metaData,
+  }) async {
     final optimisticId = 'local-${DateTime.now().microsecondsSinceEpoch}';
     final optimistic = Message(
       id: optimisticId,
@@ -326,6 +479,7 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
       type: MessageType.text,
       createdAt: DateTime.now(),
       status: MessageDeliveryStatus.sending,
+      metadata: metaData,
     );
     state = [...state, optimistic];
 
@@ -334,17 +488,19 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         roomId: roomId,
         threadId: threadId,
         content: content,
+        metaData: metaData,
       );
       if (!ref.mounted) return;
       // Thay optimistic bằng tin thật, đồng thời loại bản trùng cùng id
       // (nếu echo realtime đã được chèn vào trước đó) để không hiện 2 tin
       // giống nhau. Tin vừa gửi là mới nhất → append cuối giữ nguyên thứ tự.
-      final deduped = state
-          .where((m) => m.id != optimisticId && m.id != sent.id)
-          .toList();
+      final deduped =
+          state.where((m) => m.id != optimisticId && m.id != sent.id).toList();
       state = [...deduped, sent];
       // Cập nhật tin cuối + đẩy room lên đầu danh sách chat gần đây.
-      ref.read(conversationListProvider.notifier).updateLastMessage(threadId, sent);
+      ref
+          .read(conversationListProvider.notifier)
+          .updateLastMessage(threadId, sent);
     } catch (_) {
       if (!ref.mounted) return;
       state = state
@@ -352,6 +508,199 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
               ? m.copyWith(status: MessageDeliveryStatus.failed)
               : m)
           .toList();
+    }
+  }
+
+  /// Tải các hình ảnh được chọn lên qua Azure Blob SAS URL và gửi tin nhắn hình ảnh.
+  Future<void> sendImages(
+    List<({String path, String fileName})> imageFiles,
+  ) async {
+    if (imageFiles.isEmpty) return;
+    final uploadSasUseCase = ref.read(uploadFileViaSasUseCaseProvider);
+
+    final initialItems = imageFiles
+        .map((item) => MediaUploadItemProgress(
+              fileName: item.fileName,
+              path: item.path,
+              progress: 0.01,
+            ))
+        .toList();
+
+    ref
+        .read(mediaUploadProgressProvider.notifier)
+        .setRoomProgress(roomId, initialItems);
+
+    final uploadedFiles = <Map<String, String>>[];
+
+    try {
+      for (final item in imageFiles) {
+        try {
+          final url = await uploadSasUseCase(
+            filePath: item.path,
+            fileName: item.fileName,
+            onProgress: (sent, total) {
+              if (total > 0) {
+                final ratio = (sent / total).clamp(0.01, 0.99);
+                ref
+                    .read(mediaUploadProgressProvider.notifier)
+                    .setItemProgress(roomId, item.fileName, ratio);
+              }
+            },
+          );
+
+          ref
+              .read(mediaUploadProgressProvider.notifier)
+              .setItemProgress(roomId, item.fileName, 1.0);
+
+          final file = File(item.path);
+          final bytes = await file.readAsBytes();
+          final codec = await instantiateImageCodec(bytes);
+          final frame = await codec.getNextFrame();
+          final ext = item.fileName.split('.').last.toLowerCase();
+          final mimeType = ext == 'png'
+              ? 'image/png'
+              : ext == 'gif'
+                  ? 'image/gif'
+                  : 'image/jpeg';
+
+          uploadedFiles.add({
+            'url': url,
+            'fileName': item.fileName,
+            'mimeType': mimeType,
+            'width': frame.image.width.toString(),
+            'height': frame.image.height.toString(),
+          });
+        } catch (e, st) {
+          developer.log('Upload image failed for ${item.fileName}',
+              error: e, stackTrace: st);
+        }
+      }
+
+      if (uploadedFiles.isNotEmpty) {
+        final metaData = <String, dynamic>{
+          'type': 'image',
+          'files': uploadedFiles
+              .map((item) => {
+                    'url': item['url']?.toString() ?? '',
+                    'fileName': item['fileName']?.toString() ?? '',
+                    'mimeType': item['mimeType']?.toString() ?? 'image/jpeg',
+                    'width': item['width']?.toString() ?? '0',
+                    'height': item['height']?.toString() ?? '0',
+                  })
+              .toList(),
+        };
+
+        await sendMessage('[Hình ảnh]', metaData: metaData);
+      }
+    } finally {
+      ref
+          .read(mediaUploadProgressProvider.notifier)
+          .setRoomProgress(roomId, null);
+    }
+  }
+
+  /// Tải các tệp tài liệu được chọn lên qua Azure Blob SAS URL và gửi tin nhắn tệp.
+  Future<void> sendFiles(
+    List<({String path, String fileName})> fileItems,
+  ) async {
+    if (fileItems.isEmpty) return;
+    final uploadSasUseCase = ref.read(uploadFileViaSasUseCaseProvider);
+
+    final initialItems = fileItems
+        .map((item) => MediaUploadItemProgress(
+              fileName: item.fileName,
+              path: item.path,
+              progress: 0.01,
+            ))
+        .toList();
+
+    ref
+        .read(mediaUploadProgressProvider.notifier)
+        .setRoomProgress(roomId, initialItems);
+
+    final uploadedFiles = <Map<String, String>>[];
+
+    try {
+      for (final item in fileItems) {
+        try {
+          final url = await uploadSasUseCase(
+            filePath: item.path,
+            fileName: item.fileName,
+            onProgress: (sent, total) {
+              if (total > 0) {
+                final ratio = (sent / total).clamp(0.01, 0.99);
+                ref
+                    .read(mediaUploadProgressProvider.notifier)
+                    .setItemProgress(roomId, item.fileName, ratio);
+              }
+            },
+          );
+
+          ref
+              .read(mediaUploadProgressProvider.notifier)
+              .setItemProgress(roomId, item.fileName, 1.0);
+
+          final file = File(item.path);
+          final fileSize = file.existsSync() ? await file.length() : 0;
+          final ext = item.fileName.split('.').last.toLowerCase();
+          final mimeType = _lookupFileMimeType(ext);
+
+          uploadedFiles.add({
+            'url': url,
+            'fileName': item.fileName,
+            'mimeType': mimeType,
+            'fileSize': fileSize.toString(),
+          });
+        } catch (e, st) {
+          developer.log('Upload file failed for ${item.fileName}',
+              error: e, stackTrace: st);
+        }
+      }
+
+      if (uploadedFiles.isNotEmpty) {
+        final metaData = <String, dynamic>{
+          'type': 'file',
+          'files': uploadedFiles
+              .map((item) => {
+                    'url': item['url']?.toString() ?? '',
+                    'fileName': item['fileName']?.toString() ?? '',
+                    'mimeType':
+                        item['mimeType']?.toString() ?? 'application/octet-stream',
+                    'fileSize': item['fileSize']?.toString() ?? '0',
+                  })
+              .toList(),
+        };
+
+        await sendMessage('[Tệp tin]', metaData: metaData);
+      }
+    } finally {
+      ref
+          .read(mediaUploadProgressProvider.notifier)
+          .setRoomProgress(roomId, null);
+    }
+  }
+
+  static String _lookupFileMimeType(String ext) {
+    switch (ext) {
+      case 'pdf':
+        return 'application/pdf';
+      case 'doc':
+      case 'docx':
+        return 'application/msword';
+      case 'xls':
+      case 'xlsx':
+        return 'application/vnd.ms-excel';
+      case 'ppt':
+      case 'pptx':
+        return 'application/vnd.ms-powerpoint';
+      case 'zip':
+      case 'rar':
+      case '7z':
+        return 'application/zip';
+      case 'txt':
+        return 'text/plain';
+      default:
+        return 'application/octet-stream';
     }
   }
 
@@ -434,9 +783,8 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         // Không ẩn hẳn — đánh dấu deletedOn để UI hiện placeholder
         // "(tin nhắn đã bị xoá)" ngay, không cần chờ refresh lại lịch sử.
         state = state
-            .map((m) => m.id == messageId
-                ? m.copyWith(deletedOn: DateTime.now())
-                : m)
+            .map((m) =>
+                m.id == messageId ? m.copyWith(deletedOn: DateTime.now()) : m)
             .toList();
         // Banner ghim có thể chứa tin vừa xoá → cập nhật lại.
         await _loadPinnedMessages();

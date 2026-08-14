@@ -182,6 +182,8 @@ class _ConversationListState extends ConsumerState<ConversationList>
               : conversations.isEmpty && _keyword.isEmpty
                   ? const Center(child: Text('Chưa có cuộc trò chuyện nào'))
                   : RefreshIndicator(
+                      color: uiConfig.refreshIndicatorColor,
+                      backgroundColor: uiConfig.refreshIndicatorBackgroundColor ?? Colors.white,
                       onRefresh: notifier.refresh,
                       child: Builder(
                         builder: (context) {

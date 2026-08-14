@@ -7,6 +7,8 @@ class MessageType {
 
   static const text = MessageType._('text');
   static const html = MessageType._('html');
+  static const system = MessageType._('system');
+  static const reactionUpdate = MessageType._('reactionUpdate');
 
   /// Fallback an toàn cho type lạ chưa biết (tương thích ngược khi
   /// server trả type mới mà client cũ chưa hỗ trợ).
@@ -18,6 +20,11 @@ class MessageType {
         return text;
       case 'html':
         return html;
+      case 'system':
+      case 'participantAdded':
+      case 'participantRemoved':
+      case 'topicUpdated':
+        return system;
       default:
         return unknown;
     }
@@ -72,9 +79,8 @@ class Message {
   /// Tin đã bị xoá trên ACS (có `deletedOn`). Không hiển thị nữa.
   bool get isDeleted => deletedOn != null;
 
-  /// Dùng cho reply/quote, mention... sau này — để mở sẵn theo mục 7.2
-  /// kế hoạch gốc, MVP chưa dùng tới.
-  final Map<String, String>? metadata;
+  /// Metadata chứa thông tin hình ảnh, tệp, video, link, html...
+  final Map<String, dynamic>? metadata;
 
   Message copyWith({
     MessageDeliveryStatus? status,
@@ -83,6 +89,7 @@ class Message {
     bool? pin,
     DateTime? deletedOn,
     bool clearDeletedOn = false,
+    Map<String, dynamic>? metadata,
   }) {
     return Message(
       id: id ?? this.id,
@@ -93,11 +100,9 @@ class Message {
       type: type,
       createdAt: createdAt,
       status: status ?? this.status,
-      metadata: metadata,
+      metadata: metadata ?? this.metadata,
       pin: pin ?? this.pin,
-      deletedOn: clearDeletedOn
-          ? null
-          : deletedOn ?? this.deletedOn,
+      deletedOn: clearDeletedOn ? null : deletedOn ?? this.deletedOn,
     );
   }
 

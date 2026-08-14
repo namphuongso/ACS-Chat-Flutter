@@ -1,9 +1,8 @@
 import 'dart:convert';
-import 'dart:developer' as developer;
-
 import 'package:http/http.dart' as http;
 
 import '../error/chat_api_exception.dart';
+import '../utils/chat_logger.dart';
 
 /// Client http dùng chung cho các remote datasource (BE nội bộ):
 /// tự gắn Bearer token, decode envelope `{ data }`, map lỗi HTTP sang
@@ -12,12 +11,18 @@ import '../error/chat_api_exception.dart';
 /// Chỉ dùng cho các endpoint BE trả envelope chuẩn — endpoint ACS trực tiếp
 /// (list message, realtime) có envelope khác (`value`/`nextLink`) nên tự xử lý.
 class JsonApiClient {
-  JsonApiClient({required String backendBaseUrl, http.Client? httpClient})
-      : _base = backendBaseUrl,
+  JsonApiClient({
+    required String backendBaseUrl,
+    this.apiKey,
+    http.Client? httpClient,
+  })  : _base = backendBaseUrl,
         _http = httpClient ?? http.Client();
 
   final String _base;
+  final String? apiKey;
   final http.Client _http;
+
+  String get backendBaseUrl => _base;
 
   Future<dynamic> get(
     String path, {
@@ -28,12 +33,11 @@ class JsonApiClient {
     final uri = query == null
         ? Uri.parse('$_base$path')
         : Uri.parse('$_base$path').replace(queryParameters: query);
-    developer.log('GET Request: $uri', name: 'ChatModule');
+    ChatLogger.logRequest('GET', uri);
     final response = await _http
         .get(uri, headers: _jsonHeaders(appToken))
         .timeout(const Duration(seconds: 15));
-    developer.log('GET Response [${response.statusCode}]: ${response.body}',
-        name: 'ChatModule');
+    ChatLogger.logResponse('GET', uri, response.statusCode, response.body);
     return _decodeOrThrow(response, allowEmptyBody: allowEmptyBody);
   }
 
@@ -48,7 +52,7 @@ class JsonApiClient {
         ? Uri.parse('$_base$path')
         : Uri.parse('$_base$path').replace(queryParameters: query);
     final jsonBody = body == null ? null : jsonEncode(body);
-    developer.log('POST Request: $uri\nBody: $jsonBody', name: 'ChatModule');
+    ChatLogger.logRequest('POST', uri, body: body);
 
     final response = await _http
         .post(
@@ -57,14 +61,65 @@ class JsonApiClient {
           body: jsonBody,
         )
         .timeout(const Duration(seconds: 15));
-    developer.log('POST Response [${response.statusCode}]: ${response.body}',
-        name: 'ChatModule');
+    ChatLogger.logResponse('POST', uri, response.statusCode, response.body);
     return _decodeOrThrow(response, allowEmptyBody: allowEmptyBody);
+  }
+
+  Future<dynamic> put(
+    String path, {
+    required String appToken,
+    Object? body,
+    Map<String, String>? query,
+    bool allowEmptyBody = false,
+  }) async {
+    final uri = query == null
+        ? Uri.parse('$_base$path')
+        : Uri.parse('$_base$path').replace(queryParameters: query);
+    final jsonBody = body == null ? null : jsonEncode(body);
+    ChatLogger.logRequest('PUT', uri, body: body);
+
+    final response = await _http
+        .put(
+          uri,
+          headers: _jsonHeaders(appToken),
+          body: jsonBody,
+        )
+        .timeout(const Duration(seconds: 15));
+    ChatLogger.logResponse('PUT', uri, response.statusCode, response.body);
+    return _decodeOrThrow(response, allowEmptyBody: allowEmptyBody);
+  }
+
+  Future<dynamic> uploadFiles(
+    String path, {
+    required String appToken,
+    required List<({String path, String filename})> files,
+    String fieldName = 'file',
+  }) async {
+    final uri = Uri.parse('$_base$path');
+    final request = http.MultipartRequest('POST', uri)
+      ..headers['Authorization'] = 'Bearer $appToken';
+    if (apiKey != null && apiKey!.isNotEmpty) {
+      request.headers['X-API-KEY'] = apiKey!;
+    }
+    for (final file in files) {
+      request.files.add(await http.MultipartFile.fromPath(
+        fieldName,
+        file.path,
+        filename: file.filename,
+      ));
+    }
+    ChatLogger.logRequest('POST Multipart', uri, body: {'files': files.length});
+    final streamed =
+        await _http.send(request).timeout(const Duration(seconds: 60));
+    final response = await http.Response.fromStream(streamed);
+    ChatLogger.logResponse('POST Multipart', uri, response.statusCode, response.body);
+    return _decodeOrThrow(response);
   }
 
   Map<String, String> _jsonHeaders(String appToken) => {
         'Authorization': 'Bearer $appToken',
         'Content-Type': 'application/json',
+        if (apiKey != null && apiKey!.isNotEmpty) 'X-API-KEY': apiKey!,
       };
 
   dynamic _decodeOrThrow(http.Response response,

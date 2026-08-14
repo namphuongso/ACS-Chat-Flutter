@@ -1,6 +1,4 @@
 import 'dart:convert';
-import 'dart:developer' as developer;
-
 import 'package:http/http.dart' as http;
 
 import '../../../auth_token/domain/repositories/auth_token_repository.dart';
@@ -9,7 +7,9 @@ import '../../../conversation_list/domain/entities/conversation.dart';
 import '../../../../core/config/chat_module_config.dart';
 import '../../../../core/constants/chat_api_endpoints.dart';
 import '../../../../core/error/chat_api_exception.dart';
+import '../../../../core/utils/chat_logger.dart';
 import '../../domain/entities/message.dart';
+import '../../domain/entities/message_reaction.dart';
 import '../models/message_model.dart';
 import '../models/pinned_message_model.dart';
 import 'message_remote_datasource.dart';
@@ -33,42 +33,37 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
 
   final Map<String, PollingEngine<MessageModel>> _activePolling = {};
 
-  // TODO(verify-acs-api-version): xác nhận lại api-version mới nhất của
-  // ACS Chat REST API trước khi dùng thật — chưa gọi thử được trong
-  // sandbox này. Xem Microsoft Learn "Chat API reference".
-  static const _acsApiVersion = '2024-03-07';
-
   @override
   Future<MessageModel> sendMessage({
     required String roomId,
     required String threadId,
     required String content,
+    Map<String, dynamic>? metaData,
   }) async {
     final appToken = await _appTokenProvider.getAppToken();
     final token = await _authTokenRepository.getAccessToken(roomId);
     final uri =
         Uri.parse('${_config.backendBaseUrl}${ChatApiEndpoints.sendMessage}');
+    final payloadMetadata = metaData ?? <String, dynamic>{};
+    final requestContent = content.trim().isEmpty ? '[Hình ảnh]' : content.trim();
     final requestBody = jsonEncode({
       'roomId': roomId,
-      'content': content,
-      'metaData': {},
+      'content': requestContent,
+      'metaData': payloadMetadata,
     });
 
-    developer.log('POST Request: $uri\nBody: $requestBody', name: 'ChatModule');
+    final requestHeaders = _headers(appToken);
+    ChatLogger.logRequest('POST', uri, headers: requestHeaders, body: {'roomId': roomId, 'content': requestContent, 'metaData': payloadMetadata});
 
     final response = await _http
         .post(
           uri,
-          headers: {
-            'Authorization': 'Bearer $appToken',
-            'Content-Type': 'application/json',
-          },
+          headers: _headers(appToken),
           body: requestBody,
         )
         .timeout(const Duration(seconds: 15));
 
-    developer.log('POST Response [${response.statusCode}]: ${response.body}',
-        name: 'ChatModule');
+    ChatLogger.logResponse('POST', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw ChatApiException(
@@ -91,6 +86,7 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       type: MessageType.text,
       createdAt: DateTime.now(),
       status: MessageDeliveryStatus.sent,
+      metadata: metaData,
     );
   }
 
@@ -101,64 +97,48 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     String? startTime,
     String? cursor,
   }) async {
-    final token = await _authTokenRepository.getAccessToken(roomId);
+    final appToken = await _appTokenProvider.getAppToken();
+    final uri = Uri.parse(
+      '${_config.backendBaseUrl}${ChatApiEndpoints.getMessages}',
+    ).replace(queryParameters: {
+      'roomId': roomId,
+      'pageSize': '50',
+      if (cursor != null && cursor.isNotEmpty) 'continuationToken': cursor,
+    });
 
-    final Uri uri;
-    if (cursor != null && cursor.isNotEmpty) {
-      if (cursor.startsWith('http')) {
-        uri = Uri.parse(cursor);
-      } else {
-        final query = {
-          'api-version': _acsApiVersion,
-          'skip': cursor,
-        };
-        uri = Uri.parse(
-                '${_config.acsEndpoint}${ChatApiEndpoints.acsThreadMessages(threadId)}')
-            .replace(queryParameters: query);
-      }
-    } else {
-      final query = {
-        'api-version': _acsApiVersion,
-        'maxpagesize': '20',
-        if (startTime != null) 'startTime': startTime,
-      };
-      uri = Uri.parse(
-              '${_config.acsEndpoint}${ChatApiEndpoints.acsThreadMessages(threadId)}')
-          .replace(queryParameters: query);
-    }
-
-    developer.log('GET Request (ACS): $uri', name: 'ChatModule');
+    ChatLogger.logRequest('GET (messages)', uri);
 
     final response = await _http.get(
       uri,
-      headers: {'Authorization': 'Bearer ${token.token}'},
+      headers: {'Authorization': 'Bearer $appToken'},
     ).timeout(const Duration(seconds: 15));
 
-    developer.log(
-        'GET Response (ACS) [${response.statusCode}]: ${response.body}',
-        name: 'ChatModule');
+    ChatLogger.logResponse(
+        'GET (messages)', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200) {
       throw ChatApiException(
         statusCode: response.statusCode,
-        code: 'ACS_LIST_FAILED',
+        code: 'GET_MESSAGES_FAILED',
         message: response.body,
       );
     }
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final rawMessages = (json['value'] as List? ?? [])
-        .where((e) =>
-            (e as Map<String, dynamic>)['type'] == 'text' ||
-            e['type'] == 'html')
-        .map((e) => MessageModel.fromAcsJson(e as Map<String, dynamic>,
-            threadId: threadId))
+    final data = json['data'] as Map<String, dynamic>? ?? const {};
+    final rawMessages = (data['messages'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map((e) => MessageModel.fromAcsJson(e, threadId: threadId))
         .toList();
+    final continuationToken = data['continuationToken']?.toString();
+    final hasMore = data['hasMore'] == true &&
+        continuationToken != null &&
+        continuationToken.isNotEmpty;
 
     return PaginatedResult(
       items: rawMessages,
-      hasMore: json['nextLink'] != null,
-      cursor: json['nextLink'] as String?,
+      hasMore: hasMore,
+      cursor: hasMore ? continuationToken : null,
     );
   }
 
@@ -178,24 +158,17 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       'metaData': {},
     });
 
-    developer.log('POST Request (update message): $uri\nBody: $requestBody',
-        name: 'ChatModule');
+    ChatLogger.logRequest('POST (update message)', uri, body: {'roomId': roomId, 'messageId': messageId, 'content': content});
 
     final response = await _http
         .post(
           uri,
-          headers: {
-            'Authorization': 'Bearer $appToken',
-            'Content-Type': 'application/json',
-          },
+          headers: _headers(appToken),
           body: requestBody,
         )
         .timeout(const Duration(seconds: 15));
 
-    developer.log(
-        'POST Response (update message) [${response.statusCode}]: '
-        '${response.body}',
-        name: 'ChatModule');
+    ChatLogger.logResponse('POST (update message)', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw ChatApiException(
@@ -220,24 +193,17 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       'messageId': messageId,
     });
 
-    developer.log('POST Request (delete message): $uri\nBody: $requestBody',
-        name: 'ChatModule');
+    ChatLogger.logRequest('POST (delete message)', uri, body: {'roomId': roomId, 'messageId': messageId});
 
     final response = await _http
         .post(
           uri,
-          headers: {
-            'Authorization': 'Bearer $appToken',
-            'Content-Type': 'application/json',
-          },
+          headers: _headers(appToken),
           body: requestBody,
         )
         .timeout(const Duration(seconds: 15));
 
-    developer.log(
-        'POST Response (delete message) [${response.statusCode}]: '
-        '${response.body}',
-        name: 'ChatModule');
+    ChatLogger.logResponse('POST (delete message)', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw ChatApiException(
@@ -258,20 +224,14 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         Uri.parse('${_config.backendBaseUrl}${ChatApiEndpoints.pinMessage}')
             .replace(queryParameters: {'messageId': messageId, 'pin': '$pin'});
 
-    developer.log('POST Request (pin message): $uri', name: 'ChatModule');
+    ChatLogger.logRequest('POST (pin message)', uri);
 
     final response = await _http.post(
       uri,
-      headers: {
-        'Authorization': 'Bearer $appToken',
-        'Content-Type': 'application/json',
-      },
+      headers: _headers(appToken),
     ).timeout(const Duration(seconds: 15));
 
-    developer.log(
-        'POST Response (pin message) [${response.statusCode}]: '
-        '${response.body}',
-        name: 'ChatModule');
+    ChatLogger.logResponse('POST (pin message)', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw ChatApiException(
@@ -291,20 +251,14 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     final uri = Uri.parse(
         '${_config.backendBaseUrl}${ChatApiEndpoints.getPinnedMessages(roomId)}');
 
-    developer.log('GET Request (pinned messages): $uri', name: 'ChatModule');
+    ChatLogger.logRequest('GET (pinned messages)', uri);
 
     final response = await _http.get(
       uri,
-      headers: {
-        'Authorization': 'Bearer $appToken',
-        'Content-Type': 'application/json',
-      },
+      headers: _headers(appToken),
     ).timeout(const Duration(seconds: 15));
 
-    developer.log(
-        'GET Response (pinned messages) [${response.statusCode}]: '
-        '${response.body}',
-        name: 'ChatModule');
+    ChatLogger.logResponse('GET (pinned messages)', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200) {
       throw ChatApiException(
@@ -321,6 +275,196 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         .whereType<Map<String, dynamic>>()
         .map(PinnedMessageModel.fromJson)
         .toList();
+  }
+
+  @override
+  Future<List<ReactionConfig>> getReactionConfigs() async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final uri = Uri.parse(
+      '${_config.backendBaseUrl}${ChatApiEndpoints.getReactionConfigs}',
+    ).replace(queryParameters: {'pageIndex': '1', 'pageSize': '50'});
+    final response = await _http.get(
+      uri,
+      headers: _headers(appToken),
+    ).timeout(const Duration(seconds: 15));
+    ChatLogger.logResponse(
+        'GET (reaction configs)', uri, response.statusCode, response.body);
+    if (response.statusCode != 200) {
+      throw ChatApiException(
+        statusCode: response.statusCode,
+        code: 'GET_REACTION_CONFIGS_FAILED',
+        message: response.body,
+      );
+    }
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    return (json['data'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map((item) => ReactionConfig(
+              id: item['id']?.toString() ?? item['reactionId']?.toString(),
+              code: item['reactionCode']?.toString() ?? item['code']?.toString() ?? '',
+              displayName: item['displayName']?.toString() ?? '',
+              iconUrl: item['iconUrl']?.toString() ?? '',
+            ))
+        .where((item) => item.code.isNotEmpty)
+        .toList();
+  }
+
+  @override
+  Future<List<MessageReaction>> getMessageReactions({
+    required String roomId,
+    required String messageId,
+  }) async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final uri = Uri.parse(
+      '${_config.backendBaseUrl}${ChatApiEndpoints.getMessageReactions}',
+    ).replace(queryParameters: {
+      'roomId': roomId,
+      'messageId': messageId,
+      'pageIndex': '1',
+      'pageSize': '50',
+    });
+    final response = await _http.get(
+      uri,
+      headers: _headers(appToken),
+    ).timeout(const Duration(seconds: 15));
+    ChatLogger.logResponse(
+        'GET (message reactions)', uri, response.statusCode, response.body);
+    if (response.statusCode != 200) {
+      throw ChatApiException(
+        statusCode: response.statusCode,
+        code: 'GET_MESSAGE_REACTIONS_FAILED',
+        message: response.body,
+      );
+    }
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    return (json['data'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map((item) => MessageReaction(
+              userId: item['userId']?.toString() ?? '',
+              contactName: item['contactName']?.toString() ?? '',
+              avatarUrl: item['avatarUrl']?.toString(),
+              reactionCode: item['reactionCode']?.toString() ?? '',
+              reactionIconUrl: item['reactionIconUrl']?.toString() ?? '',
+              reactedAt: DateTime.tryParse(
+                item['reactedDate']?.toString() ?? '',
+              )?.toLocal(),
+            ))
+        .toList();
+  }
+
+  @override
+  Future<List<MessageReactionSummary>> getRoomReactions(String roomId) async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final uri = Uri.parse(
+      '${_config.backendBaseUrl}${ChatApiEndpoints.getRoomReactions(roomId)}',
+    ).replace(queryParameters: {'pageIndex': '1', 'pageSize': '50'});
+    final response = await _http.get(
+      uri,
+      headers: _headers(appToken),
+    ).timeout(const Duration(seconds: 15));
+    ChatLogger.logResponse(
+        'GET (room reactions)', uri, response.statusCode, response.body);
+    if (response.statusCode != 200) {
+      throw ChatApiException(
+        statusCode: response.statusCode,
+        code: 'GET_ROOM_REACTIONS_FAILED',
+        message: response.body,
+      );
+    }
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    return (json['data'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map((item) => MessageReactionSummary(
+              messageId: item['messageId']?.toString() ?? '',
+              totalReactions: int.tryParse(
+                    item['totalReactions']?.toString() ?? '',
+                  ) ??
+                  0,
+              myReactionCode: item['myReactionCode']?.toString(),
+              myReactionIconUrl: item['myReactionIconUrl']?.toString(),
+              previewIconUrl: _reactionPreviewIcon(item),
+            ))
+        .where((item) => item.messageId.isNotEmpty)
+        .toList();
+  }
+
+  String? _extractIcon(Map<dynamic, dynamic> item, List<String> keys) {
+    for (final key in keys) {
+      final value = item[key]?.toString();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  String? _reactionPreviewIcon(Map<String, dynamic> item) {
+    final mine = _extractIcon(item, const [
+      'myReactionIconUrl',
+      'myReactionIcon',
+      'reactionIconUrl',
+      'reactionIcon',
+      'iconUrl',
+      'IconUrl',
+    ]);
+    if (mine != null && mine.isNotEmpty) return mine;
+
+    final others = item['otherReaction'] ?? item['otherReactions'] ?? item['others'];
+    if (others is List) {
+      for (final raw in others.whereType<Map>()) {
+        final map = raw.cast<dynamic, dynamic>();
+        final icon = _extractIcon(map, const [
+          'reactionIconUrl',
+          'reactionIcon',
+          'iconUrl',
+          'IconUrl',
+          'myReactionIconUrl',
+          'myReactionIcon',
+        ]);
+        if (icon != null && icon.isNotEmpty) return icon;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<bool> reactMessage({
+    required String roomId,
+    required String threadId,
+    required String messageId,
+    required String reactionCode,
+  }) async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final uri = Uri.parse(
+      '${_config.backendBaseUrl}${ChatApiEndpoints.reactionMessage}',
+    );
+    final payload = <String, dynamic>{
+      'messageId': messageId,
+      'roomId': roomId,
+      'threadId': threadId,
+    };
+    if (reactionCode.isNotEmpty && reactionCode != '0') {
+      payload['reactionId'] = reactionCode;
+      payload['reactionCode'] = reactionCode;
+    }
+    final headers = _headers(appToken);
+    final body = jsonEncode(payload);
+    ChatLogger.logRequest('POST (reaction message)', uri, headers: headers, body: body);
+
+    final response = await _http.post(
+      uri,
+      headers: headers,
+      body: body,
+    ).timeout(const Duration(seconds: 15));
+    ChatLogger.logResponse(
+        'POST (reaction message)', uri, response.statusCode, response.body);
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw ChatApiException(
+        statusCode: response.statusCode,
+        code: 'REACTION_MESSAGE_FAILED',
+        message: response.body,
+      );
+    }
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    return json['data'] == true;
   }
 
   @override
@@ -356,4 +500,11 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     _activePolling.clear();
     _http.close();
   }
+
+  Map<String, String> _headers(String appToken) => {
+        'Authorization': 'Bearer $appToken',
+        'Content-Type': 'application/json',
+        if (_config.apiKey != null && _config.apiKey!.isNotEmpty)
+          'X-API-KEY': _config.apiKey!,
+      };
 }

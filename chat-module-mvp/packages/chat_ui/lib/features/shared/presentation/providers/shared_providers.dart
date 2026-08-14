@@ -91,3 +91,45 @@ final markAsReadUseCaseProvider = Provider<MarkAsReadUseCase>((ref) {
   final repo = ref.watch(readStatusRepositoryProvider);
   return MarkAsReadUseCase(repo);
 });
+
+final createGroupConversationUseCaseProvider =
+    Provider<CreateGroupConversationUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return CreateGroupConversationUseCase(repo);
+});
+
+final getMembersUseCaseProvider = Provider<GetMembersUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return GetMembersUseCase(repo);
+});
+
+final updateRoomInfoUseCaseProvider = Provider<UpdateRoomInfoUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return UpdateRoomInfoUseCase(repo);
+});
+
+final addParticipantsUseCaseProvider = Provider<AddParticipantsUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return AddParticipantsUseCase(repo);
+});
+
+final removeParticipantsUseCaseProvider =
+    Provider<RemoveParticipantsUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return RemoveParticipantsUseCase(repo);
+});
+
+final transferOwnershipUseCaseProvider =
+    Provider<TransferOwnershipUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return TransferOwnershipUseCase(repo);
+});
+
+final leaveRoomUseCaseProvider = Provider<LeaveRoomUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return LeaveRoomUseCase(repo);
+});
+
+final uploadRoomAvatarUseCaseProvider = Provider<UploadRoomAvatarUseCase>((ref) {
+  return UploadRoomAvatarUseCase(ref.watch(conversationRepositoryProvider));
+});

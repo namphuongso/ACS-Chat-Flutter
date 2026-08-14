@@ -14,6 +14,7 @@ class AuthTokenRemoteDataSourceImpl implements AuthTokenRemoteDataSource {
     http.Client? httpClient,
   })  : _api = JsonApiClient(
           backendBaseUrl: config.backendBaseUrl,
+          apiKey: config.apiKey,
           httpClient: httpClient,
         ),
         _appTokenProvider = appTokenProvider;

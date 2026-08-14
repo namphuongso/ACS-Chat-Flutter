@@ -44,7 +44,9 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
   }
 
   void _onNewMessage(Message message) {
-    final exists = state.any((c) => c.threadId == message.threadId);
+    final exists = state.any(
+      (c) => c.threadId == message.threadId || c.id == message.threadId,
+    );
     if (exists) {
       updateLastMessage(message.threadId, message);
       return;
@@ -129,9 +131,30 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
         state.map((c) => c.id == roomId ? c.copyWith(pin: pin) : c).toList();
   }
 
+  void removeRoom(String roomId) {
+    state = state.where((c) => c.id != roomId).toList();
+  }
+
   void updateRoomParticipants(String roomId, List<ChatUser> participants) {
     state = state
         .map((c) => c.id == roomId ? c.copyWith(participants: participants) : c)
+        .toList();
+  }
+
+  void updateRoomDetails(
+    String roomId, {
+    String? roomName,
+    String? avatarUrl,
+    List<ChatUser>? participants,
+  }) {
+    state = state
+        .map((room) => room.id == roomId
+            ? room.copyWith(
+                roomName: roomName,
+                avatarUrl: avatarUrl,
+                participants: participants,
+              )
+            : room)
         .toList();
   }
 
@@ -145,7 +168,12 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
   /// Cập nhật tin nhắn cuối + đẩy room lên đầu khi có tin mới (real-time
   /// hoặc vừa gửi tin từ trong thread). Ghim luôn ở trên cùng.
   void updateLastMessage(String threadId, Message message) {
-    final idx = state.indexWhere((c) => c.threadId == threadId);
+    if (message.type == MessageType.reactionUpdate) return;
+    // WebSocket backend chỉ có roomId, còn history ACS từng dùng threadId.
+    // Chấp nhận cả hai routing key để last message cập nhật tức thời.
+    final idx = state.indexWhere(
+      (c) => c.threadId == threadId || c.id == threadId,
+    );
     if (idx == -1) return;
     final conversation = state[idx];
     final updated = conversation.copyWith(
@@ -153,6 +181,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
         content: message.content,
         senderDisplayName: message.senderDisplayName,
         createdAt: message.createdAt,
+        senderId: message.senderId,
       ),
     );
     final rest = state.where((c) => c.id != updated.id).toList();
@@ -176,4 +205,5 @@ class ConversationListLoading extends Notifier<bool> {
 }
 
 final conversationListLoadingProvider =
-    NotifierProvider<ConversationListLoading, bool>(ConversationListLoading.new);
+    NotifierProvider<ConversationListLoading, bool>(
+        ConversationListLoading.new);

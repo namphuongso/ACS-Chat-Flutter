@@ -1,3 +1,4 @@
+import '../../../../core/domain/entities/chat_member.dart';
 import '../entities/conversation.dart';
 
 abstract class ConversationRepository {
@@ -5,6 +6,54 @@ abstract class ConversationRepository {
   /// BE tự xử lý duplicate prevention (ACS không có unique constraint
   /// cho direct thread — theo api-docs mục 1.1).
   Future<Conversation> getOrCreateDirectConversation(String otherUserId);
+
+  Future<Conversation> createGroupConversation({
+    required List<String> participantIds,
+    required String roomName,
+    String? avatarUrl,
+  });
+
+  Future<List<ChatMember>> getMembers(String roomId);
+
+  Future<bool> updateRoomInfo({
+    required String roomId,
+    required String roomName,
+    String? avatarUrl,
+    required String roomType,
+  });
+
+  Future<int> addParticipants({
+    required String roomId,
+    required List<String> participantIds,
+  });
+
+  Future<int> removeParticipants({
+    required String roomId,
+    required List<String> participantIds,
+  });
+
+  Future<bool> transferOwnership({
+    required String roomId,
+    required String toUserId,
+  });
+
+  Future<bool> leaveRoom({
+    required String roomId,
+    String? newAdminUserId,
+  });
+
+  Future<String> uploadRoomAvatar({
+    required String filePath,
+    required String filename,
+  });
+
+  Future<String> uploadFileViaSas({
+    required String filePath,
+    required String fileName,
+    String? contentType,
+    String? documentId,
+    void Function(int sent, int total)? onProgress,
+  });
 
   Future<PaginatedResult<Conversation>> listConversations({
     String? cursor,

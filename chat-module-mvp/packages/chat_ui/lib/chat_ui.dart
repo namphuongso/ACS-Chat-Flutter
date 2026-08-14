@@ -1,10 +1,13 @@
 // Widgets & Screens
 export 'core/chat_route_observer.dart';
 export 'core/widgets/offline_banner.dart';
+export 'core/widgets/rich_message_text.dart';
 export 'core/widgets/search_field.dart';
+export 'core/widgets/chat_dialogs.dart';
 
 export 'features/conversation_list/presentation/screens/conversation_list_screen.dart';
 export 'features/thread/presentation/screens/thread_screen.dart';
+export 'features/thread/presentation/screens/room_settings_screen.dart';
 export 'features/thread/presentation/widgets/message_bubble.dart';
 export 'features/thread/presentation/widgets/message_input.dart';
 

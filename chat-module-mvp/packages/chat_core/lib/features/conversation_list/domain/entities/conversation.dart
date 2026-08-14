@@ -9,11 +9,13 @@ class ConversationSummary {
     required this.content,
     required this.senderDisplayName,
     required this.createdAt,
+    this.senderId,
   });
 
   final String content;
   final String senderDisplayName;
   final DateTime createdAt;
+  final String? senderId;
 }
 
 class Conversation {
@@ -77,6 +79,8 @@ class Conversation {
     int? unreadCount,
     ConversationSummary? lastMessage,
     List<ChatUser>? participants,
+    String? roomName,
+    String? avatarUrl,
   }) {
     return Conversation(
       id: id,
@@ -85,8 +89,8 @@ class Conversation {
       participants: participants ?? this.participants,
       createdAt: createdAt,
       updatedAt: updatedAt,
-      roomName: roomName,
-      avatarUrl: avatarUrl,
+      roomName: roomName ?? this.roomName,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
       pid: pid,
       pin: pin ?? this.pin,
       isMuted: isMuted ?? this.isMuted,

@@ -82,6 +82,7 @@ class HiveConversationLocalDataSource implements ConversationLocalDataSource {
             : {
                 'content': c.lastMessage!.content,
                 'senderDisplayName': c.lastMessage!.senderDisplayName,
+                'senderId': c.lastMessage!.senderId,
                 'createdAt': c.lastMessage!.createdAt.toIso8601String(),
               },
       };
@@ -110,6 +111,7 @@ class HiveConversationLocalDataSource implements ConversationLocalDataSource {
                 senderDisplayName:
                     (j['lastMessage'] as Map)['senderDisplayName'] as String? ??
                         '',
+                senderId: (j['lastMessage'] as Map)['senderId'] as String?,
                 createdAt: DateTime.parse(
                         (j['lastMessage'] as Map)['createdAt'] as String)
                     .toLocal(),

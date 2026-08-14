@@ -19,6 +19,7 @@ final messageRepositoryProvider = Provider<MessageRepository>((ref) {
   final realtime = NativeRealtimeDataSourceImpl(
     config: config,
     authTokenRepository: authTokenRepo,
+    appTokenProvider: appTokenProvider,
   );
   final repo = MessageRepositoryImpl(
     remoteDataSource: remote,
@@ -105,4 +106,65 @@ final threadMessagesProvider =
     stopWatchingMessagesUseCaseProvider,
     getPinnedMessagesUseCaseProvider,
   ],
+);
+
+final uploadFileViaSasUseCaseProvider = Provider<UploadFileViaSasUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return UploadFileViaSasUseCase(repo);
+});
+
+class MediaUploadItemProgress {
+  final String fileName;
+  final String path;
+  final double progress;
+
+  const MediaUploadItemProgress({
+    required this.fileName,
+    required this.path,
+    required this.progress,
+  });
+
+  MediaUploadItemProgress copyWith({double? progress}) {
+    return MediaUploadItemProgress(
+      fileName: fileName,
+      path: path,
+      progress: progress ?? this.progress,
+    );
+  }
+}
+
+class MediaUploadProgressNotifier
+    extends Notifier<Map<String, List<MediaUploadItemProgress>?>> {
+  @override
+  Map<String, List<MediaUploadItemProgress>?> build() => const {};
+
+  void setRoomProgress(String roomId, List<MediaUploadItemProgress>? items) {
+    state = {
+      ...state,
+      roomId: items,
+    };
+  }
+
+  void setItemProgress(String roomId, String fileName, double progress) {
+    final current = state[roomId];
+    if (current == null) return;
+
+    final updated = current.map((item) {
+      if (item.fileName == fileName) {
+        return item.copyWith(progress: progress);
+      }
+      return item;
+    }).toList();
+
+    state = {
+      ...state,
+      roomId: updated,
+    };
+  }
+}
+
+final mediaUploadProgressProvider = NotifierProvider<
+    MediaUploadProgressNotifier,
+    Map<String, List<MediaUploadItemProgress>?>>(
+  MediaUploadProgressNotifier.new,
 );

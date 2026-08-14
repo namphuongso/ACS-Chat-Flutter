@@ -25,7 +25,11 @@ class ChatUiConfig {
     this.roomBackgroundColor,
     this.appBarBackgroundColor,
     this.iconColor,
+    this.appBarIconColor,
+    this.actionIconColor,
+    this.actionIconBackgroundColor,
     this.inputBarBackgroundColor,
+    this.inputActionIconColor,
     this.inputFieldFillColor,
     this.inputFieldBorderColor,
     this.inputTextColor,
@@ -34,6 +38,18 @@ class ChatUiConfig {
     this.searchBarIconColor,
     this.searchBarTextColor,
     this.searchBarHintColor,
+    this.refreshIndicatorColor,
+    this.refreshIndicatorBackgroundColor,
+    this.pinnedMessageBackgroundColor,
+    this.pinnedMessageTextColor,
+    this.pinnedMessageIconColor,
+    this.surfaceColor,
+    this.primaryActionColor,
+    this.dangerColor,
+    this.secondaryTextColor,
+    this.dialogBackgroundColor,
+    this.formFieldFillColor,
+    this.formFieldBorderColor,
   });
 
   /// Màu nền bubble tin nhắn của mình (bên phải). `null` = fallback theme.
@@ -60,10 +76,16 @@ class ChatUiConfig {
 
   /// Màu icon chung (AppBar, nút gửi, ...). `null` = fallback theme.
   final Color? iconColor;
+  final Color? appBarIconColor;
+  final Color? actionIconColor;
+  final Color? actionIconBackgroundColor;
 
   /// Nền của khung input chat (vùng chứa ô nhập + nút gửi). `null` = fallback
   /// theme (`surface`).
   final Color? inputBarBackgroundColor;
+
+  /// Màu các icon hành động quanh ô nhập. `null` dùng [iconColor].
+  final Color? inputActionIconColor;
 
   /// Nền ô nhập tin nhắn (TextField). `null` = fallback theme.
   final Color? inputFieldFillColor;
@@ -88,6 +110,42 @@ class ChatUiConfig {
 
   /// Màu hint trong ô tìm kiếm. `null` = fallback theme.
   final Color? searchBarHintColor;
+
+  /// Màu vòng xoay khi kéo để làm mới danh sách. `null` = màu primary theme.
+  final Color? refreshIndicatorColor;
+
+  /// Màu đĩa nền của vòng xoay khi kéo để làm mới danh sách. `null` = Colors.white.
+  final Color? refreshIndicatorBackgroundColor;
+
+  /// Nền thanh tin nhắn được ghim. `null` = fallback (Colors.orange.shade50).
+  final Color? pinnedMessageBackgroundColor;
+
+  /// Màu chữ tin nhắn được ghim. `null` = fallback (Colors.orange.shade900).
+  final Color? pinnedMessageTextColor;
+
+  /// Màu icon ghim/list trong thanh tin ghim. `null` = fallback (Colors.orange).
+  final Color? pinnedMessageIconColor;
+
+  /// Nền card/section trong màn chi tiết room.
+  final Color? surfaceColor;
+
+  /// Màu hành động chính: nút lưu, thêm người, admin...
+  final Color? primaryActionColor;
+
+  /// Màu hành động nguy hiểm: xoá, rời nhóm.
+  final Color? dangerColor;
+
+  /// Màu nội dung phụ/mô tả.
+  final Color? secondaryTextColor;
+
+  /// Nền dialog/form dùng chung.
+  final Color? dialogBackgroundColor;
+
+  /// Nền ô nhập trong form/dialog dùng chung.
+  final Color? formFieldFillColor;
+
+  /// Viền ô nhập trong form/dialog dùng chung.
+  final Color? formFieldBorderColor;
 }
 
 /// Provider cấu hình UI. Host app có thể override để đổi màu bubble.

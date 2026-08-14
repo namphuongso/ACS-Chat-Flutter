@@ -24,6 +24,7 @@ class _MockRemote implements MessageRemoteDataSource {
     required String roomId,
     required String threadId,
     required String content,
+    Map<String, dynamic>? metaData,
   }) async {
     return MessageModel(
       id: 'sent-$content',
@@ -34,6 +35,7 @@ class _MockRemote implements MessageRemoteDataSource {
       type: MessageType.text,
       createdAt: DateTime(2026, 2, 1),
       status: MessageDeliveryStatus.sent,
+      metadata: metaData,
     );
   }
 
@@ -60,6 +62,29 @@ class _MockRemote implements MessageRemoteDataSource {
   @override
   Future<List<PinnedMessageModel>> getPinnedMessages(String roomId) async =>
       const [];
+
+  @override
+  Future<List<ReactionConfig>> getReactionConfigs() async => const [];
+
+  @override
+  Future<List<MessageReaction>> getMessageReactions({
+    required String roomId,
+    required String messageId,
+  }) async =>
+      const [];
+
+  @override
+  Future<List<MessageReactionSummary>> getRoomReactions(String roomId) async =>
+      const [];
+
+  @override
+  Future<bool> reactMessage({
+    required String roomId,
+    required String threadId,
+    required String messageId,
+    required String reactionCode,
+  }) async =>
+      true;
 
   @override
   Stream<MessageModel> watchNewMessages(String roomId, String threadId) =>

@@ -1,3 +1,4 @@
+import '../../../../core/data/models/chat_member_model.dart';
 import '../../../../core/data/models/chat_user_model.dart';
 import '../../domain/entities/conversation.dart';
 
@@ -6,6 +7,7 @@ class ConversationSummaryModel extends ConversationSummary {
     required super.content,
     required super.senderDisplayName,
     required super.createdAt,
+    super.senderId,
   });
 
   static ConversationSummaryModel? fromJsonNullable(dynamic json) {
@@ -16,6 +18,8 @@ class ConversationSummaryModel extends ConversationSummary {
       senderDisplayName:
           (map['sender'] as Map<String, dynamic>?)?['displayName'] as String? ??
               '',
+      senderId: (map['sender'] as Map<String, dynamic>?)?['id'] as String? ??
+          (map['sender'] as Map<String, dynamic>?)?['acsUserId'] as String?,
       createdAt: DateTime.parse(map['createdAt'] as String).toLocal(),
     );
   }
@@ -46,7 +50,7 @@ class ConversationModel extends Conversation {
     return ConversationModel(
       id: json['id'] as String,
       threadId: json['threadId'] as String,
-      type: json['type'] == 'group'
+      type: json['type'] == 'group' || json['type'] == 'G'
           ? ConversationType.group
           : ConversationType.direct,
       participants: ((json['participants'] as List?) ?? [])
@@ -74,21 +78,11 @@ class ConversationModel extends Conversation {
     );
   }
 
-  /// BE gộp tên người gửi vào chuỗi `lastMessage` dạng `"Tên người gửi: nội dung"`.
-  /// Tách riêng ra để UI chỉ hiện nội dung và biết ai là người gửi
-  /// (hiện "Bạn: nội dung" nếu là chính mình).
+  /// Giữ nguyên chuỗi `lastMessage` do BE trả về để UI hiển thị đúng dữ liệu.
   static ConversationSummaryModel _summaryFromRaw({
     required String raw,
     required DateTime createdAt,
   }) {
-    final separatorIndex = raw.indexOf(': ');
-    if (separatorIndex > 0) {
-      return ConversationSummaryModel(
-        content: raw.substring(separatorIndex + 2),
-        senderDisplayName: raw.substring(0, separatorIndex).trim(),
-        createdAt: createdAt,
-      );
-    }
     return ConversationSummaryModel(
       content: raw,
       senderDisplayName: '',
@@ -101,12 +95,8 @@ class ConversationModel extends Conversation {
   /// (dùng `roomId`/`roomType`, có `members`, kèm `cui`/`token`/`tokenUtcExp`).
   factory ConversationModel.fromRoomJson(Map<String, dynamic> json) {
     final members = ((json['members'] as List?) ?? [])
-        .map((e) => ChatUserModel(
-              id: (e as Map<String, dynamic>)['userId'] as String? ?? '',
-              displayName: e['contactName'] as String? ?? '',
-              avatarUrl: e['avatarUrl'] as String?,
-              acsUserId: e['cui'] as String?,
-            ))
+        .whereType<Map>()
+        .map((e) => ChatMemberModel.fromJson(e.cast<String, dynamic>()))
         .toList();
     final created = DateTime.now();
     return ConversationModel(

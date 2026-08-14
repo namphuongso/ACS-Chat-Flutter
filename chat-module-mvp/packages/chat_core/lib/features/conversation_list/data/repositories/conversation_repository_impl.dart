@@ -1,3 +1,4 @@
+import '../../../../core/domain/entities/chat_member.dart';
 import '../../domain/entities/conversation.dart';
 import '../../domain/repositories/conversation_repository.dart';
 import '../datasources/conversation_local_datasource.dart';
@@ -96,6 +97,159 @@ class ConversationRepositoryImpl implements ConversationRepository {
     } catch (_) {
       // Cache lỗi không nên làm hỏng luồng chính.
     }
+  }
+
+  @override
+  Future<Conversation> createGroupConversation({
+    required List<String> participantIds,
+    required String roomName,
+    String? avatarUrl,
+  }) async {
+    final conversation = await _dataSource.createGroupConversation(
+      participantIds: participantIds,
+      roomName: roomName,
+      avatarUrl: avatarUrl,
+    );
+    await _saveToCache([conversation]);
+    return conversation;
+  }
+
+  @override
+  Future<List<ChatMember>> getMembers(String roomId) async {
+    return await _dataSource.getMembers(roomId);
+  }
+
+  @override
+  Future<bool> updateRoomInfo({
+    required String roomId,
+    required String roomName,
+    String? avatarUrl,
+    required String roomType,
+  }) async {
+    final result = await _dataSource.updateRoomInfo(
+      roomId: roomId,
+      roomName: roomName,
+      avatarUrl: avatarUrl,
+      roomType: roomType,
+    );
+    final local = _local;
+    if (local != null && result) {
+      try {
+        final cached = await local.getCachedConversations();
+        final updated = cached.map((c) {
+          if (c.id == roomId) {
+            return c.copyWith(roomName: roomName, avatarUrl: avatarUrl);
+          }
+          return c;
+        }).toList();
+        await local.saveConversations(updated);
+      } catch (_) {}
+    }
+    return result;
+  }
+
+  @override
+  Future<int> addParticipants({
+    required String roomId,
+    required List<String> participantIds,
+  }) async {
+    final count = await _dataSource.addParticipants(
+      roomId: roomId,
+      participantIds: participantIds,
+    );
+    if (count > 0) {
+      await _syncConversationMembers(roomId);
+    }
+    return count;
+  }
+
+  @override
+  Future<int> removeParticipants({
+    required String roomId,
+    required List<String> participantIds,
+  }) async {
+    final count = await _dataSource.removeParticipants(
+      roomId: roomId,
+      participantIds: participantIds,
+    );
+    if (count > 0) {
+      await _syncConversationMembers(roomId);
+    }
+    return count;
+  }
+
+  @override
+  Future<bool> transferOwnership({
+    required String roomId,
+    required String toUserId,
+  }) async {
+    final result = await _dataSource.transferOwnership(
+      roomId: roomId,
+      toUserId: toUserId,
+    );
+    if (result) {
+      await _syncConversationMembers(roomId);
+    }
+    return result;
+  }
+
+  @override
+  Future<bool> leaveRoom({
+    required String roomId,
+    String? newAdminUserId,
+  }) async {
+    final result = await _dataSource.leaveRoom(
+      roomId: roomId,
+      newAdminUserId: newAdminUserId,
+    );
+    final local = _local;
+    if (local != null && result) {
+      try {
+        final cached = await local.getCachedConversations();
+        final updated = cached.where((c) => c.id != roomId).toList();
+        await local.saveConversations(updated);
+      } catch (_) {}
+    }
+    return result;
+  }
+
+  @override
+  Future<String> uploadRoomAvatar({
+    required String filePath,
+    required String filename,
+  }) =>
+      _dataSource.uploadFileViaSas(filePath: filePath, fileName: filename);
+
+  @override
+  Future<String> uploadFileViaSas({
+    required String filePath,
+    required String fileName,
+    String? contentType,
+    String? documentId,
+    void Function(int sent, int total)? onProgress,
+  }) =>
+      _dataSource.uploadFileViaSas(
+        filePath: filePath,
+        fileName: fileName,
+        contentType: contentType,
+        documentId: documentId,
+        onProgress: onProgress,
+      );
+
+  Future<void> _syncConversationMembers(String roomId) async {
+    final local = _local;
+    if (local == null) return;
+    try {
+      final members = await getMembers(roomId);
+      final cached = await local.getCachedConversations();
+      final updated = cached.map((c) {
+        if (c.id == roomId) {
+          return c.copyWith(participants: members);
+        }
+        return c;
+      }).toList();
+      await local.saveConversations(updated);
+    } catch (_) {}
   }
 
   void dispose() => _dataSource.dispose();
