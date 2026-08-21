@@ -175,13 +175,20 @@ class _ContactListScreenState extends ConsumerState<ContactListScreen> {
                                   : Colors.transparent,
                               child: ListTile(
                                 leading: CircleAvatar(
+                                  backgroundColor: const Color(0xFFF0F2F5),
                                   backgroundImage: hasAvatar
                                       ? NetworkImage(user.avatarUrl!)
                                       : null,
                                   child: !hasAvatar
-                                      ? Text(user.displayName.isNotEmpty
-                                          ? user.displayName[0].toUpperCase()
-                                          : '?')
+                                      ? Text(
+                                          user.displayName.isNotEmpty
+                                              ? user.displayName[0].toUpperCase()
+                                              : '?',
+                                          style: const TextStyle(
+                                            color: Colors.black87,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        )
                                       : null,
                                 ),
                                 title: Text(user.displayName),

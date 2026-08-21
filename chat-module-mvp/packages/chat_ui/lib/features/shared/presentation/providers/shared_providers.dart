@@ -47,16 +47,41 @@ final conversationRepositoryProvider = Provider<ConversationRepository>((ref) {
   return repo;
 });
 
-final readStatusRepositoryProvider = Provider<ReadStatusRepository>((ref) {
+final messageRepositoryProvider = Provider<MessageRepository>((ref) {
   final config = ref.watch(chatModuleConfigProvider);
-  final tokenProvider = ref.watch(chatAuthTokenProviderProvider);
-  final dataSource = ReadStatusRemoteDataSourceImpl(
+  final authTokenRepo = ref.watch(authTokenRepositoryProvider);
+  final appTokenProvider = ref.watch(chatAuthTokenProviderProvider);
+  final local = ref.watch(messageLocalDataSourceProvider);
+
+  final remote = MessageRemoteDataSourceImpl(
     config: config,
-    appTokenProvider: tokenProvider,
+    authTokenRepository: authTokenRepo,
+    appTokenProvider: appTokenProvider,
   );
-  final repo = ReadStatusRepositoryImpl(dataSource);
+  final realtime = NativeRealtimeDataSourceImpl(
+    config: config,
+    authTokenRepository: authTokenRepo,
+    appTokenProvider: appTokenProvider,
+  );
+  final repo = MessageRepositoryImpl(
+    remoteDataSource: remote,
+    realtimeDataSource: realtime,
+    localDataSource: local,
+  );
   ref.onDispose(repo.dispose);
   return repo;
+});
+
+final watchListMessagesUseCaseProvider =
+    Provider<WatchListMessagesUseCase>((ref) {
+  final repo = ref.watch(messageRepositoryProvider);
+  return WatchListMessagesUseCase(repo);
+});
+
+final stopWatchingListMessagesUseCaseProvider =
+    Provider<StopWatchingListMessagesUseCase>((ref) {
+  final repo = ref.watch(messageRepositoryProvider);
+  return StopWatchingListMessagesUseCase(repo);
 });
 
 // Use Cases Providers
@@ -85,11 +110,6 @@ final getConversationUseCaseProvider = Provider<GetConversationUseCase>((ref) {
 final pinConversationUseCaseProvider = Provider<PinConversationUseCase>((ref) {
   final repo = ref.watch(conversationRepositoryProvider);
   return PinConversationUseCase(repo);
-});
-
-final markAsReadUseCaseProvider = Provider<MarkAsReadUseCase>((ref) {
-  final repo = ref.watch(readStatusRepositoryProvider);
-  return MarkAsReadUseCase(repo);
 });
 
 final createGroupConversationUseCaseProvider =
@@ -125,11 +145,38 @@ final transferOwnershipUseCaseProvider =
   return TransferOwnershipUseCase(repo);
 });
 
+final setRoleAdminUseCaseProvider = Provider<SetRoleAdminUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return SetRoleAdminUseCase(repo);
+});
+
 final leaveRoomUseCaseProvider = Provider<LeaveRoomUseCase>((ref) {
   final repo = ref.watch(conversationRepositoryProvider);
   return LeaveRoomUseCase(repo);
 });
 
+final closeRoomUseCaseProvider = Provider<CloseRoomUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return CloseRoomUseCase(repo);
+});
+
 final uploadRoomAvatarUseCaseProvider = Provider<UploadRoomAvatarUseCase>((ref) {
   return UploadRoomAvatarUseCase(ref.watch(conversationRepositoryProvider));
+});
+
+class GlobalCurrentUserIdNotifier extends Notifier<String> {
+  @override
+  String build() => '';
+
+  void setUserId(String userId) {
+    state = userId;
+  }
+}
+
+final globalCurrentUserIdProvider =
+    NotifierProvider<GlobalCurrentUserIdNotifier, String>(
+        GlobalCurrentUserIdNotifier.new);
+
+final currentUserIdProvider = Provider<String>((ref) {
+  return ref.watch(globalCurrentUserIdProvider);
 });

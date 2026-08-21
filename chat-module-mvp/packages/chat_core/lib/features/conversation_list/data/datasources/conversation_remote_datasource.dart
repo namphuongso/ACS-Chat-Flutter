@@ -43,10 +43,20 @@ abstract class ConversationRemoteDataSource {
     required String toUserId,
   });
 
+  Future<bool> setRoleAdmin({
+    required String roomId,
+    required String userId,
+    required bool admin,
+  });
+
   Future<bool> leaveRoom({
     required String roomId,
     String? newAdminUserId,
   });
+
+  /// Đóng (khóa) room — giải tán nhóm (API docs mục 23, `close-room`).
+  /// BE gửi event `RoomDisbanded` qua realtime cho các thành viên.
+  Future<bool> closeRoom({required String roomId});
 
   Future<String> uploadRoomAvatar({
     required String filePath,

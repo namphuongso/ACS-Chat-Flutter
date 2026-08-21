@@ -16,7 +16,10 @@ class ChatUserModel extends ChatUser {
           (json['fullName'] as String?) ??
           (json['contactName'] as String?) ??
           '',
-      avatarUrl: json['avatarUrl'] as String?,
+      avatarUrl: (json['avatarUrl'] as String?) ??
+          (json['avatar'] as String?) ??
+          (json['photoUrl'] as String?) ??
+          (json['pictureUrl'] as String?),
       acsUserId: (json['acsUserId'] as String?) ?? (json['cui'] as String?),
       email: json['email'] as String?,
     );

@@ -12,15 +12,18 @@ class ConversationSummaryModel extends ConversationSummary {
 
   static ConversationSummaryModel? fromJsonNullable(dynamic json) {
     if (json == null) return null;
-    final map = json as Map<String, dynamic>;
+    if (json is! Map) return null;
+    final map = json.cast<String, dynamic>();
+    final createdStr = map['createdAt']?.toString() ?? '';
+    final createdAt = DateTime.tryParse(createdStr)?.toLocal() ?? DateTime.now();
     return ConversationSummaryModel(
-      content: map['content'] as String? ?? '',
+      content: map['content']?.toString() ?? '',
       senderDisplayName:
-          (map['sender'] as Map<String, dynamic>?)?['displayName'] as String? ??
+          (map['sender'] as Map<String, dynamic>?)?['displayName']?.toString() ??
               '',
-      senderId: (map['sender'] as Map<String, dynamic>?)?['id'] as String? ??
-          (map['sender'] as Map<String, dynamic>?)?['acsUserId'] as String?,
-      createdAt: DateTime.parse(map['createdAt'] as String).toLocal(),
+      senderId: (map['sender'] as Map<String, dynamic>?)?['id']?.toString() ??
+          (map['sender'] as Map<String, dynamic>?)?['acsUserId']?.toString(),
+      createdAt: createdAt,
     );
   }
 }
@@ -47,32 +50,41 @@ class ConversationModel extends Conversation {
 
   /// Parse item trả về từ `GET /chat/get-room-chats`.
   factory ConversationModel.fromJson(Map<String, dynamic> json) {
+    final createdStr = json['created']?.toString() ?? '';
+    final createdAt = DateTime.tryParse(createdStr)?.toLocal() ?? DateTime.now();
+    final modifiedStr = json['modified']?.toString();
+    final updatedAt = modifiedStr != null
+        ? (DateTime.tryParse(modifiedStr)?.toLocal() ?? createdAt)
+        : createdAt;
+
+    final lastMessageTimeStr = json['lastMessageTime']?.toString();
+    final lastMessageTime = lastMessageTimeStr != null
+        ? (DateTime.tryParse(lastMessageTimeStr)?.toLocal() ?? createdAt)
+        : createdAt;
+
     return ConversationModel(
-      id: json['id'] as String,
-      threadId: json['threadId'] as String,
+      id: json['id']?.toString() ?? '',
+      threadId: json['threadId']?.toString() ?? '',
       type: json['type'] == 'group' || json['type'] == 'G'
           ? ConversationType.group
           : ConversationType.direct,
       participants: ((json['participants'] as List?) ?? [])
-          .map((e) => ChatUserModel.fromJson(e as Map<String, dynamic>))
+          .whereType<Map>()
+          .map((e) => ChatUserModel.fromJson(e.cast<String, dynamic>()))
           .toList(),
-      createdAt: DateTime.parse(json['created'] as String).toLocal(),
-      updatedAt: json['modified'] != null
-          ? DateTime.parse(json['modified'] as String).toLocal()
-          : DateTime.parse(json['created'] as String).toLocal(),
-      roomName: json['roomName'] as String? ?? '',
-      avatarUrl: json['avatarUrl'] as String?,
-      pid: json['pid'] as String?,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      roomName: json['roomName']?.toString() ?? '',
+      avatarUrl: json['avatarUrl']?.toString(),
+      pid: json['pid']?.toString(),
       pin: json['pin'] as bool? ?? false,
       isMuted: json['isMuted'] as bool? ?? false,
       unreadCount: (json['isRead'] as bool? ?? true) ? 0 : 1,
       lastMessage: json['lastMessage'] != null &&
-              (json['lastMessage'] as String).isNotEmpty
+              (json['lastMessage'].toString()).isNotEmpty
           ? _summaryFromRaw(
-              raw: json['lastMessage'] as String,
-              createdAt: json['lastMessageTime'] != null
-                  ? DateTime.parse(json['lastMessageTime'] as String).toLocal()
-                  : DateTime.parse(json['created'] as String).toLocal(),
+              raw: json['lastMessage'].toString(),
+              createdAt: lastMessageTime,
             )
           : null,
     );

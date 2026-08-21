@@ -9,6 +9,11 @@ import '../../../../core/widgets/chat_dialogs.dart';
 import '../../../conversation_list/presentation/providers/conversation_providers.dart';
 import '../../../shared/presentation/providers/shared_providers.dart';
 import 'add_participants_screen.dart';
+import 'room_members_screen.dart';
+import '../widgets/room_danger_zone.dart';
+import '../widgets/room_header_section.dart';
+import '../widgets/room_quick_actions.dart';
+import '../widgets/room_resource_preview_section.dart';
 
 class RoomSettingsScreen extends ConsumerStatefulWidget {
   const RoomSettingsScreen({
@@ -17,14 +22,12 @@ class RoomSettingsScreen extends ConsumerStatefulWidget {
     required this.currentUserId,
     required this.roomType,
     this.onRoomChanged,
-    this.onSystemMessage,
   });
 
   final String roomId;
   final String currentUserId;
   final ConversationType roomType;
   final ValueChanged<Conversation>? onRoomChanged;
-  final ValueChanged<String>? onSystemMessage;
 
   @override
   ConsumerState<RoomSettingsScreen> createState() => _RoomSettingsScreenState();
@@ -51,18 +54,12 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
       final room =
           await ref.read(getConversationUseCaseProvider)(widget.roomId);
 
-      // join-room đã trả sẵn `members`, gồm cả isAdmin. Dùng dữ liệu này
-      // ngay để trang chi tiết không bị trống nếu endpoint get-members chưa
-      // đồng bộ hoặc trả schema khác. Nếu get-members hoạt động thì ưu tiên
-      // danh sách mới hơn từ endpoint đó.
       var members = _asMembers(room.participants);
       try {
         final remoteMembers =
             await ref.read(getMembersUseCaseProvider)(widget.roomId);
         if (remoteMembers.isNotEmpty) members = remoteMembers;
-      } catch (_) {
-        // Dữ liệu join-room vẫn đủ để hiển thị thành viên và quyền quản trị.
-      }
+      } catch (_) {}
 
       final myMember = members
           .where((member) => member.id == widget.currentUserId)
@@ -115,9 +112,6 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final uiConfig = ref.watch(chatUiConfigProvider);
-    // Ưu tiên loại phòng lấy trực tiếp từ join-room. `roomType` truyền từ
-    // ThreadScreen có thể bị fallback thành direct khi danh sách conversation
-    // chưa load xong, làm toàn bộ UI thành viên/quản trị nhóm bị ẩn.
     final isGroup = _roomDetails?.type == ConversationType.group ||
         widget.roomType == ConversationType.group;
 
@@ -125,7 +119,7 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
       backgroundColor: uiConfig.roomBackgroundColor ?? const Color(0xFFF6F7F9),
       appBar: AppBar(
         title: Text(
-          'Tùy chọn',
+          isGroup ? 'Thông tin nhóm' : 'Thông tin hội thoại',
           style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
@@ -148,29 +142,114 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
           : SingleChildScrollView(
               child: Column(
                 children: [
-                  const SizedBox(height: 24),
-                  _buildRoomHeader(uiConfig, isGroup),
-                  if (isGroup) _buildGroupQuickActions(uiConfig),
-                  if (isGroup) _buildGroupInfoRows(uiConfig),
                   const SizedBox(height: 10),
-                  if (isGroup) ...[
-                    _buildMemberListSection(uiConfig),
-                    const SizedBox(height: 10),
-                    _buildDangerZoneSection(),
-                  ],
+                  RoomHeaderSection(
+                    uiConfig: uiConfig,
+                    isGroup: isGroup,
+                    isAdmin: _isAdmin,
+                    roomDetails: _roomDetails,
+                    members: _members,
+                    currentUserId: widget.currentUserId,
+                    onPickAvatar: _pickAndUpdateRoomAvatar,
+                    onEditName: _showEditRoomInfoDialog,
+                  ),
+                  if (isGroup)
+                    RoomQuickActions(
+                      config: uiConfig,
+                      onSearchTap: () => Navigator.pop(context, 'open_search'),
+                      onAddMembersTap: _openMembersScreen,
+                    ),
+                  if (!isGroup) _buildDirectRoomOptions(uiConfig),
+                  RoomResourcePreviewSection(
+                    roomId: widget.roomId,
+                    extraRows: [
+                      if (isGroup) _buildMemberRow(uiConfig),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  RoomDangerZone(
+                    config: uiConfig,
+                    isGroup: isGroup,
+                    isAdmin: _isAdmin,
+                    onLeaveTap: _showLeaveGroupConfirmDialog,
+                    onDisbandTap: _showDisbandGroupConfirmDialog,
+                  ),
+                  const SizedBox(height: 24),
                 ],
               ),
             ),
     );
   }
 
-  Widget _buildGroupQuickActions(ChatUiConfig config) {
+
+
+  // Widget _buildGroupInfoRows(ChatUiConfig config) {
+  //   final iconColor = config.actionIconColor ?? Colors.blueGrey;
+  //   final rows = [
+  //     (Icons.info_outline, 'Thêm mô tả nhóm'),
+  //     (Icons.event_outlined, 'Lịch nhóm'),
+  //     (Icons.push_pin_outlined, 'Tin nhắn đã ghim'),
+  //     (Icons.poll_outlined, 'Bình chọn'),
+  //   ];
+  //   return Padding(
+  //     padding: const EdgeInsets.only(top: 8),
+  //     child: Material(
+  //       color: config.surfaceColor ?? Colors.white,
+  //       child: Column(
+  //         children: [
+  //           for (final row in rows)
+  //             ListTile(
+  //               leading: Icon(row.$1, color: iconColor, size: 28),
+  //               title: Text(row.$2, style: const TextStyle(fontSize: 16)),
+  //               trailing: Icon(Icons.chevron_right, color: iconColor),
+  //               onTap: () => showChatFeatureComingSoon(
+  //                 context,
+  //                 feature: row.$2,
+  //                 config: config,
+  //               ),
+  //             ),
+  //         ],
+  //       ),
+  //     ),
+  //   );
+  // }
+
+  /// Khối tùy chọn cho phòng 1-1: tắt thông báo (đang phát triển),
+  /// ghim hội thoại và tạo cuộc trò chuyện (tạo nhóm với người này).
+  Widget _buildDirectRoomOptions(ChatUiConfig config) {
     final iconColor = config.actionIconColor ?? Colors.black87;
+    final conversations = ref.watch(conversationListProvider);
+    final isPinned = conversations
+            .where((conversation) => conversation.id == widget.roomId)
+            .firstOrNull
+            ?.pin ??
+        _roomDetails?.pin ??
+        false;
     final items = [
-      (Icons.search, 'Tìm\ntin nhắn'),
-      (Icons.group_add_outlined, 'Thêm\nthành viên'),
-      (Icons.wallpaper_outlined, 'Đổi\nhình nền'),
-      (Icons.notifications_none, 'Tắt\nthông báo'),
+      (
+        Icons.search,
+        'Tìm\ntin nhắn',
+        () => Navigator.pop(context, 'open_search'),
+      ),
+      // (
+      //   Icons.notifications_none,
+      //   'Tắt\nthông báo',
+      //   () => showChatFeatureComingSoon(
+      //         context,
+      //         feature: 'Tắt thông báo',
+      //         config: config,
+      //       ),
+      // ),
+      (
+        isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+        isPinned ? 'Bỏ ghim\nhội thoại' : 'Ghim\nhội thoại',
+        () => _togglePinRoom(isPinned),
+      ),
+      (
+        Icons.group_add_outlined,
+        'Tạo cuộc\ntrò chuyện',
+        _openCreateConversation,
+      ),
     ];
     return Material(
       color: config.surfaceColor ?? Colors.white,
@@ -182,13 +261,7 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
             for (final item in items)
               Expanded(
                 child: InkWell(
-                  onTap: item.$1 == Icons.group_add_outlined
-                      ? _showAddParticipantsDialog
-                      : () => showChatFeatureComingSoon(
-                            context,
-                            feature: item.$2.replaceAll('\n', ' '),
-                            config: config,
-                          ),
+                  onTap: item.$3,
                   borderRadius: BorderRadius.circular(14),
                   child: Column(
                     children: [
@@ -212,134 +285,136 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
     );
   }
 
-  Widget _buildGroupInfoRows(ChatUiConfig config) {
-    final iconColor = config.actionIconColor ?? Colors.blueGrey;
-    final rows = [
-      (Icons.info_outline, 'Thêm mô tả nhóm'),
-      (Icons.photo_library_outlined, 'Ảnh, file, link'),
-      (Icons.event_outlined, 'Lịch nhóm'),
-      (Icons.push_pin_outlined, 'Tin nhắn đã ghim'),
-      (Icons.poll_outlined, 'Bình chọn'),
-    ];
-    return Material(
-      color: config.surfaceColor ?? Colors.white,
-      child: Container(
-        margin: const EdgeInsets.only(top: 8),
-        child: Column(
-          children: [
-            for (final row in rows)
-              ListTile(
-                leading: Icon(row.$1, color: iconColor, size: 28),
-                title: Text(row.$2, style: const TextStyle(fontSize: 16)),
-                trailing: Icon(Icons.chevron_right, color: iconColor),
-                onTap: () => showChatFeatureComingSoon(
-                  context,
-                  feature: row.$2,
-                  config: config,
-                ),
-              ),
-          ],
+  Future<void> _togglePinRoom(bool currentPin) async {
+    final config = ref.read(chatUiConfigProvider);
+    final target = !currentPin;
+    ref
+        .read(conversationListProvider.notifier)
+        .updateRoomPin(widget.roomId, target);
+    try {
+      final ok =
+          await ref.read(pinConversationUseCaseProvider)(widget.roomId, target);
+      if (!mounted) return;
+      if (!ok) {
+        ref
+            .read(conversationListProvider.notifier)
+            .updateRoomPin(widget.roomId, currentPin);
+        showChatToast(
+          context,
+          message: 'Không thể ghim cuộc trò chuyện',
+          isError: true,
+          config: config,
+        );
+      } else {
+        showChatToast(
+          context,
+          message:
+              target ? 'Đã ghim cuộc trò chuyện' : 'Đã bỏ ghim cuộc trò chuyện',
+          config: config,
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      ref
+          .read(conversationListProvider.notifier)
+          .updateRoomPin(widget.roomId, currentPin);
+      showChatToast(
+        context,
+        message: 'Không thể ghim lúc này',
+        isError: true,
+        config: config,
+      );
+    }
+  }
+
+  /// "Tạo cuộc trò chuyện": mở màn chọn danh bạ (đã loại trừ bạn và người
+  /// đang chat vì mặc định nằm trong nhóm), sau đó nhập tên và tạo nhóm.
+  Future<void> _openCreateConversation() async {
+    final other = _members
+        .where((member) => member.id != widget.currentUserId)
+        .firstOrNull;
+    if (other == null) return;
+
+    final selectedIds = await Navigator.push<List<String>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddParticipantsScreen(
+          currentMembers: _members,
+          title: 'Tạo cuộc trò chuyện',
         ),
       ),
     );
-  }
+    if (selectedIds == null || selectedIds.isEmpty || !mounted) return;
 
-  Widget _buildRoomHeader(ChatUiConfig uiConfig, bool isGroup) {
-    final otherMember = !isGroup
-        ? _members
-            .where((member) => member.id != widget.currentUserId)
-            .firstOrNull
-        : null;
-    final displayName = isGroup
-        ? (_roomDetails?.roomName.isNotEmpty == true
-            ? _roomDetails!.roomName
-            : 'Nhóm chat')
-        : (otherMember?.displayName.isNotEmpty == true
-            ? otherMember!.displayName
-            : (_roomDetails?.roomName.isNotEmpty == true
-                ? _roomDetails!.roomName
-                : 'Người dùng'));
-    final avatarUrl = isGroup
-        ? _roomDetails?.avatarUrl
-        : (isNetworkAvatar(otherMember?.avatarUrl)
-            ? otherMember?.avatarUrl
-            : _roomDetails?.avatarUrl);
-    final hasAvatar = isNetworkAvatar(avatarUrl);
+    final groupName = await showChatTextInputDialog(
+      context: context,
+      config: ref.read(chatUiConfigProvider),
+      title: 'Tạo cuộc trò chuyện',
+      hintText: 'Nhập tên nhóm chat...',
+      confirmLabel: 'Tạo',
+    );
+    if (groupName == null || !mounted) return;
 
-    final surface = uiConfig.surfaceColor ?? Colors.white;
-    final primary =
-        uiConfig.primaryActionColor ?? Theme.of(context).colorScheme.primary;
-    final secondary = uiConfig.secondaryTextColor ??
-        Theme.of(context).colorScheme.onSurfaceVariant;
-    return Container(
-      width: double.infinity,
-      color: surface,
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-      child: Column(
-        children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              CircleAvatar(
-                radius: 48,
-                backgroundImage: hasAvatar ? NetworkImage(avatarUrl!) : null,
-                child: !hasAvatar
-                    ? Text(
-                        displayName.isNotEmpty
-                            ? displayName[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(fontSize: 32),
-                      )
-                    : null,
-              ),
-              if (isGroup && _isAdmin)
-                Positioned(
-                  right: -4,
-                  bottom: -4,
-                  child: Material(
-                    color: primary,
-                    shape: const CircleBorder(),
-                    child: IconButton(
-                      tooltip: 'Đổi ảnh nhóm',
-                      visualDensity: VisualDensity.compact,
-                      icon: const Icon(Icons.camera_alt_outlined,
-                          color: Colors.white, size: 16),
-                      onPressed: _pickAndUpdateRoomAvatar,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  displayName,
-                  style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ),
-              if (isGroup && _isAdmin)
-                IconButton(
-                  tooltip: 'Đổi tên nhóm',
-                  visualDensity: VisualDensity.compact,
-                  icon: Icon(Icons.edit_outlined, color: primary, size: 20),
-                  onPressed: _showEditRoomInfoDialog,
-                ),
-            ],
-          ),
-          Text(
-            isGroup
-                ? 'Nhóm trò chuyện • ${_members.length} thành viên'
-                : 'Trò chuyện cá nhân',
-            style: TextStyle(color: secondary, fontSize: 13),
-          ),
-        ],
-      ),
+    await _handleCreateConversation(
+      selectedIds: selectedIds,
+      groupName: groupName,
     );
   }
+
+  Future<void> _handleCreateConversation({
+    required List<String> selectedIds,
+    required String groupName,
+  }) async {
+    final config = ref.read(chatUiConfigProvider);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    try {
+      final participantIds = <String>{
+        widget.currentUserId,
+        ..._members.map((member) => member.id),
+        ...selectedIds,
+      }.toList();
+
+      final conversation =
+          await ref.read(createGroupConversationUseCaseProvider)(
+        participantIds: participantIds,
+        roomName: groupName,
+      );
+
+      if (conversation.token != null &&
+          conversation.tokenUtcExp != null &&
+          conversation.cui != null) {
+        ref.read(authTokenRepositoryProvider).cacheToken(
+              conversation.id,
+              ChatAccessToken(
+                token: conversation.token!,
+                expiresOn: conversation.tokenUtcExp!,
+                acsUserId: conversation.cui!,
+              ),
+            );
+      }
+
+      ref.read(conversationListProvider.notifier).addOrUpdateRoom(conversation);
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Tắt loading
+      // Trả conversation mới về ThreadScreen để mở luôn cuộc trò chuyện đó.
+      Navigator.of(context).pop(conversation);
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Tắt loading
+      showChatToast(
+        context,
+        message: 'Không thể tạo cuộc trò chuyện: $e',
+        isError: true,
+        config: config,
+      );
+    }
+  }
+
+
 
   Future<void> _pickAndUpdateRoomAvatar() async {
     final result = await FilePicker.pickFiles(
@@ -370,7 +445,6 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
       Navigator.pop(context);
       if (success) {
         await _loadData();
-        widget.onSystemMessage?.call('Ảnh nhóm đã được cập nhật');
         if (mounted) {
           showChatToast(
             context,
@@ -393,146 +467,59 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
     }
   }
 
-  Widget _buildMemberListSection(ChatUiConfig uiConfig) {
-    final primary =
-        uiConfig.primaryActionColor ?? Theme.of(context).colorScheme.primary;
-    return Material(
-      color: uiConfig.surfaceColor ?? Colors.white,
-      child: SizedBox(
-        width: double.infinity,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Thành viên',
-                      style:
-                          TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                    ),
-                    if (_isAdmin)
-                      TextButton.icon(
-                        onPressed: _showAddParticipantsDialog,
-                        icon: const Icon(Icons.person_add, size: 18),
-                        label: const Text('Thêm thành viên'),
-                        style: TextButton.styleFrom(foregroundColor: primary),
-                      ),
-                  ],
-                ),
-              ),
-              const Divider(),
-              if (_members.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-                  child: Center(
-                    child: Text(
-                      'Chưa tải được danh sách thành viên',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ),
-                )
-              else
-                ListView.builder(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _members.length,
-                  itemBuilder: (context, index) {
-                    final member = _members[index];
-                    final isMe = member.id == widget.currentUserId;
-                    final hasAvatar = isNetworkAvatar(member.avatarUrl);
-
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundImage:
-                            hasAvatar ? NetworkImage(member.avatarUrl!) : null,
-                        child: !hasAvatar
-                            ? Text(member.displayName.isNotEmpty
-                                ? member.displayName[0].toUpperCase()
-                                : '?')
-                            : null,
-                      ),
-                      title: Text(member.displayName + (isMe ? ' (Bạn)' : '')),
-                      subtitle: member.isAdmin
-                          ? Text(
-                              'Trưởng nhóm',
-                              style: TextStyle(
-                                color: primary,
-                                fontWeight: FontWeight.w600,
-                                fontSize: 12,
-                              ),
-                            )
-                          : null,
-                      trailing: _isAdmin && !isMe
-                          ? PopupMenuButton<String>(
-                              onSelected: (value) =>
-                                  _handleMemberAction(value, member),
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: 'transfer',
-                                  child: ChatActionMenuTile(
-                                    icon: Icons.admin_panel_settings_outlined,
-                                    label: 'Chuyển quyền Admin',
-                                  ),
-                                ),
-                                PopupMenuItem(
-                                  value: 'remove',
-                                  child: ChatActionMenuTile(
-                                    icon: Icons.person_remove_outlined,
-                                    label: 'Xóa khỏi nhóm',
-                                    color: uiConfig.dangerColor ?? Colors.red,
-                                  ),
-                                ),
-                              ],
-                            )
-                          : null,
-                    );
-                  },
-                ),
-            ],
+  /// Dòng "Thành viên" — click mở trang danh sách thành viên của phòng.
+  Widget _buildMemberRow(ChatUiConfig uiConfig) {
+    final iconColor = uiConfig.actionIconColor ?? Colors.blueGrey;
+    final secondary = uiConfig.secondaryTextColor ??
+        Theme.of(context).colorScheme.onSurfaceVariant;
+    return ListTile(
+      leading: Icon(Icons.people_outline, color: iconColor, size: 28),
+      title: const Text('Thành viên', style: TextStyle(fontSize: 16)),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${_members.length}',
+            style: TextStyle(color: secondary, fontSize: 15),
           ),
+          const SizedBox(width: 4),
+          Icon(Icons.chevron_right, color: iconColor),
+        ],
+      ),
+      onTap: _openMembersScreen,
+    );
+  }
+
+  Future<void> _openMembersScreen() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => RoomMembersScreen(
+          roomId: widget.roomId,
+          currentUserId: widget.currentUserId,
+          isAdmin: _isAdmin,
+          initialMembers: _members,
+          onMembersChanged: (members) {
+            if (!mounted) return;
+            setState(() {
+              _members = members;
+              _isAdmin = members
+                      .where((member) => member.id == widget.currentUserId)
+                      .firstOrNull
+                      ?.isAdmin ??
+                  false;
+            });
+            final details = _roomDetails;
+            if (details != null) {
+              widget.onRoomChanged
+                  ?.call(details.copyWith(participants: members));
+            }
+          },
         ),
       ),
     );
   }
 
-  Widget _buildDangerZoneSection() {
-    final config = ref.read(chatUiConfigProvider);
-    final danger = config.dangerColor ?? Colors.redAccent;
-    return Material(
-      color: config.surfaceColor ?? Colors.white,
-      child: SizedBox(
-        width: double.infinity,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: Column(
-            children: [
-              ListTile(
-                leading: Icon(Icons.exit_to_app, color: danger),
-                title: Text(
-                  'Rời khỏi phòng',
-                  style: TextStyle(color: danger, fontWeight: FontWeight.bold),
-                ),
-                onTap: _showLeaveGroupConfirmDialog,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 
-  void _handleMemberAction(String action, ChatMember member) {
-    if (action == 'transfer') {
-      _showTransferOwnershipConfirmDialog(member);
-    } else if (action == 'remove') {
-      _showRemoveMemberConfirmDialog(member);
-    }
-  }
 
   Future<void> _showEditRoomInfoDialog() async {
     final name = await showChatTextInputDialog(
@@ -569,8 +556,6 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
 
       if (success) {
         await _loadData();
-        widget.onSystemMessage
-            ?.call('Tên nhóm đã được đổi thành "**$newName**"');
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -588,72 +573,20 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
     }
   }
 
-  Future<void> _showTransferOwnershipConfirmDialog(ChatMember member) async {
+  Future<void> _showDisbandGroupConfirmDialog() async {
     final confirmed = await showChatConfirmDialog(
       context: context,
       config: ref.read(chatUiConfigProvider),
-      title: 'Chuyển quyền Admin',
+      title: 'Giải tán nhóm',
       message:
-          'Bạn có chắc chắn muốn chuyển quyền trưởng nhóm cho ${member.displayName}? Sau khi chuyển, bạn sẽ không còn là Admin nữa.',
-    );
-    if (confirmed && mounted) _transferOwnership(member.id);
-  }
-
-  Future<void> _transferOwnership(String toUserId) async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-
-    try {
-      final transferOwnershipUseCase =
-          ref.read(transferOwnershipUseCaseProvider);
-      final success = await transferOwnershipUseCase(
-        roomId: widget.roomId,
-        toUserId: toUserId,
-      );
-
-      if (mounted) {
-        Navigator.pop(context); // Tắt loading
-      }
-
-      if (success) {
-        await _loadData();
-        final member = _members.where((m) => m.id == toUserId).firstOrNull;
-        widget.onSystemMessage?.call(
-            '**${member?.displayName ?? 'Thành viên'}** đã được chuyển quyền Admin');
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Không thể chuyển quyền Admin')),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // Tắt loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi: $e')),
-        );
-      }
-    }
-  }
-
-  Future<void> _showRemoveMemberConfirmDialog(ChatMember member) async {
-    final confirmed = await showChatConfirmDialog(
-      context: context,
-      config: ref.read(chatUiConfigProvider),
-      title: 'Xóa khỏi nhóm',
-      message:
-          'Bạn có chắc chắn muốn xóa ${member.displayName} khỏi phòng chat này không?',
-      confirmLabel: 'Xóa',
+          'Bạn có chắc chắn muốn giải tán nhóm này không? Toàn bộ thành viên sẽ bị xóa khỏi nhóm và không thể khôi phục.',
+      confirmLabel: 'Giải tán',
       destructive: true,
     );
-    if (confirmed && mounted) _removeMember(member.id);
+    if (confirmed && mounted) _closeRoom();
   }
 
-  Future<void> _removeMember(String userId) async {
+  Future<void> _closeRoom() async {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -661,110 +594,39 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
     );
 
     try {
-      final removeParticipantsUseCase =
-          ref.read(removeParticipantsUseCaseProvider);
-      final removedCount = await removeParticipantsUseCase(
-        roomId: widget.roomId,
-        participantIds: [userId],
-      );
+      final success =
+          await ref.read(closeRoomUseCaseProvider)(roomId: widget.roomId);
 
-      if (mounted) {
-        Navigator.pop(context); // Tắt loading
-      }
+      if (!mounted) return;
+      Navigator.pop(context); // Tắt loading
 
-      if (removedCount > 0) {
-        final removed = _members.where((m) => m.id == userId).firstOrNull;
-        await _loadData();
-        widget.onSystemMessage?.call(
-            '**${removed?.displayName ?? 'Thành viên'}** đã bị xóa khỏi nhóm');
-        if (mounted) {
-          showChatToast(
-            context,
-            message: 'Đã xóa thành viên khỏi nhóm',
-            config: ref.read(chatUiConfigProvider),
-          );
-          Navigator.pop(context);
-        }
+      if (success) {
+        showChatToast(
+          context,
+          message: 'Đã giải tán nhóm',
+          config: ref.read(chatUiConfigProvider),
+        );
+        Navigator.pop(context, 'room_disbanded');
+        Future.microtask(() {
+          ref.read(conversationListProvider.notifier).removeRoom(widget.roomId);
+        });
       } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Không thể xóa thành viên')),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // Tắt loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi: $e')),
+        showChatToast(
+          context,
+          message: 'Không thể giải tán nhóm',
+          isError: true,
+          config: ref.read(chatUiConfigProvider),
         );
       }
-    }
-  }
-
-  void _showAddParticipantsDialog() async {
-    final selectedUserIds = await Navigator.push<List<String>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => AddParticipantsScreen(
-          currentMembers: _members,
-        ),
-      ),
-    );
-    if (selectedUserIds != null && selectedUserIds.isNotEmpty && mounted) {
-      _addMembers(selectedUserIds);
-    }
-  }
-
-  Future<void> _addMembers(List<String> userIds) async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator()),
-    );
-
-    try {
-      final addParticipantsUseCase = ref.read(addParticipantsUseCaseProvider);
-      final addedCount = await addParticipantsUseCase(
-        roomId: widget.roomId,
-        participantIds: userIds,
-      );
-
-      if (mounted) {
-        Navigator.pop(context); // Tắt loading
-      }
-
-      if (addedCount > 0) {
-        await _loadData();
-        final names = _members
-            .where((m) => userIds.contains(m.id))
-            .map((m) => m.displayName)
-            .where((name) => name.isNotEmpty)
-            .join(', ');
-        widget.onSystemMessage?.call(
-            '**${names.isEmpty ? 'Thành viên' : names}** đã được thêm vào nhóm');
-        if (mounted) {
-          showChatToast(
-            context,
-            message: 'Đã thêm thành viên vào nhóm',
-            config: ref.read(chatUiConfigProvider),
-          );
-          Navigator.pop(context);
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Không thể thêm thành viên')),
-          );
-        }
-      }
     } catch (e) {
-      if (mounted) {
-        Navigator.pop(context); // Tắt loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi: $e')),
-        );
-      }
+      if (!mounted) return;
+      Navigator.pop(context); // Tắt loading
+      showChatToast(
+        context,
+        message: 'Lỗi khi giải tán nhóm: $e',
+        isError: true,
+        config: ref.read(chatUiConfigProvider),
+      );
     }
   }
 

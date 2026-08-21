@@ -44,6 +44,7 @@ class _MockRemote implements MessageRemoteDataSource {
     required String roomId,
     required String messageId,
     required String content,
+    Map<String, dynamic>? metadata,
   }) async {
     return true;
   }
@@ -64,6 +65,14 @@ class _MockRemote implements MessageRemoteDataSource {
       const [];
 
   @override
+  Future<List<MessageReaderModel>> getMessageReaders({
+    required String roomId,
+    required String messageId,
+    bool? read,
+  }) async =>
+      const [];
+
+  @override
   Future<List<ReactionConfig>> getReactionConfigs() async => const [];
 
   @override
@@ -76,6 +85,16 @@ class _MockRemote implements MessageRemoteDataSource {
   @override
   Future<List<MessageReactionSummary>> getRoomReactions(String roomId) async =>
       const [];
+
+  @override
+  Future<PaginatedResult<MessageResourceModel>> getMessageResources({
+    required String roomId,
+    required MessageResourceType resourceType,
+    int pageIndex = 1,
+    int pageSize = 50,
+    String? keyword,
+  }) async =>
+      const PaginatedResult<MessageResourceModel>(items: [], hasMore: false);
 
   @override
   Future<bool> reactMessage({
@@ -111,6 +130,18 @@ class _MockRealtime implements NativeRealtimeDataSource {
 
   @override
   Future<void> stopWatchingList() async {}
+
+  @override
+  void sendReadMessage(String lastVisibleMessageId) {}
+
+  @override
+  void clearReadMessageState() {}
+
+  @override
+  void leaveActiveRoom() {}
+
+  @override
+  void resetSession() {}
 
   @override
   Future<void> dispose() async {}

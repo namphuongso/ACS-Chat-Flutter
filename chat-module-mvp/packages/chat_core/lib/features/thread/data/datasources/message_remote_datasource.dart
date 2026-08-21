@@ -1,6 +1,9 @@
 import '../../../conversation_list/domain/entities/conversation.dart';
 import '../models/message_model.dart';
 import '../models/pinned_message_model.dart';
+import '../models/message_reader_model.dart';
+import '../models/message_resource_model.dart';
+import '../../domain/entities/message_resource.dart';
 import '../../domain/entities/message_reaction.dart';
 
 /// Nguồn dữ liệu tin nhắn: send qua BE (`/chat/send-message`), list/history
@@ -18,6 +21,7 @@ abstract class MessageRemoteDataSource {
     required String roomId,
     required String messageId,
     required String content,
+    Map<String, dynamic>? metadata,
   });
 
   /// Xoá tin nhắn — đi qua BE (`POST /chat/delete-message`). ACS không xoá
@@ -41,6 +45,20 @@ abstract class MessageRemoteDataSource {
   /// (`GET /chat/get-pinned-messages/{roomId}`). ACS không mang thông tin
   /// ghim, nên đây là nguồn duy nhất để mọi user trong room thấy tin ghim.
   Future<List<PinnedMessageModel>> getPinnedMessages(String roomId);
+
+  Future<List<MessageReaderModel>> getMessageReaders({
+    required String roomId,
+    required String messageId,
+    bool? read,
+  });
+
+  Future<PaginatedResult<MessageResourceModel>> getMessageResources({
+    required String roomId,
+    required MessageResourceType resourceType,
+    int pageIndex = 1,
+    int pageSize = 50,
+    String? keyword,
+  });
 
   Future<List<ReactionConfig>> getReactionConfigs();
 

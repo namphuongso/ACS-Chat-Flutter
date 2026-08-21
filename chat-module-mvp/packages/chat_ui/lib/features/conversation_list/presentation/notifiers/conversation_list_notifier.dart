@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../thread/presentation/providers/thread_providers.dart';
 import '../../../shared/presentation/providers/shared_providers.dart';
 
 class ConversationListNotifier extends Notifier<List<Conversation>> {
-  late final ListConversationsUseCase _listConversationsUseCase;
-  late final ConversationRepository _conversationRepository;
+  ListConversationsUseCase get _listConversationsUseCase =>
+      ref.read(listConversationsUseCaseProvider);
+  ConversationRepository get _conversationRepository =>
+      ref.read(conversationRepositoryProvider);
+
   StreamSubscription<Message>? _listRealtimeSub;
   bool _listRealtimeStarted = false;
   String? _cursor;
@@ -16,8 +18,11 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
 
   @override
   List<Conversation> build() {
-    _listConversationsUseCase = ref.watch(listConversationsUseCaseProvider);
-    _conversationRepository = ref.watch(conversationRepositoryProvider);
+    ref.watch(listConversationsUseCaseProvider);
+    ref.watch(conversationRepositoryProvider);
+    final stopWatchingListUseCase =
+        ref.watch(stopWatchingListMessagesUseCaseProvider);
+
     Future.microtask(() {
       unawaited(_initFromCache());
       unawaited(refresh());
@@ -25,7 +30,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
 
     ref.onDispose(() {
       unawaited(_listRealtimeSub?.cancel());
-      unawaited(ref.read(stopWatchingListMessagesUseCaseProvider)());
+      unawaited(stopWatchingListUseCase());
     });
 
     return const [];
@@ -35,28 +40,96 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
   /// hiện (lastMessage + đẩy lên đầu) ngay, không cần mở room/pull-to-refresh.
   void _startListRealtime() {
     if (_listRealtimeStarted) return;
-    final firstRoom = state.firstOrNull;
-    if (firstRoom == null) return;
     _listRealtimeStarted = true;
+    final roomId = state.firstOrNull?.id ?? '';
     _listRealtimeSub = ref
-        .read(watchListMessagesUseCaseProvider)(firstRoom.id)
+        .read(watchListMessagesUseCaseProvider)(roomId)
         .listen(_onNewMessage);
   }
 
   void _onNewMessage(Message message) {
-    final exists = state.any(
-      (c) => c.threadId == message.threadId || c.id == message.threadId,
-    );
-    if (exists) {
-      updateLastMessage(message.threadId, message);
+    final metadata = message.metadata;
+    final eventType = metadata?['eventType']?.toString();
+
+    if (message.type == MessageType.roomDisbanded) {
+      removeRoom(message.threadId);
       return;
     }
-    // Tin từ 1 room CHƯA có trong danh sách — vd người khác trên web tạo
-    // room mới với mình rồi nhắn luôn. Trước đây bỏ qua event này → room
-    // mới chỉ hiện khi tắt app mở lại (gọi lại get-room-chats). Giờ tự
-    // fetch lại danh sách để room mới hiện ngay. Debounce để không spam
-    // get-room-chats khi có nhiều tin từ cùng 1 room mới.
-    _scheduleRefreshForNewRoom();
+    if (eventType == 'MemberRemoved') {
+      final payload = (metadata?['payload'] is Map) ? (metadata!['payload'] as Map).cast<String, dynamic>() : <String, dynamic>{};
+      final removedUserId = (metadata?['removedUserId'] ?? payload['removedUserId'] ?? '').toString();
+      final currentUserId = ref.read(globalCurrentUserIdProvider).isNotEmpty
+          ? ref.read(globalCurrentUserIdProvider)
+          : ref.read(currentUserIdProvider);
+
+      final isSelfRemoved = metadata?['isSelf'] == true ||
+          (removedUserId.isNotEmpty &&
+              currentUserId.isNotEmpty &&
+              _isSameUser(removedUserId, currentUserId));
+      if (isSelfRemoved) {
+        removeRoom(message.threadId);
+        return;
+      }
+    }
+    if (eventType == 'MemberJoined' || message.type == MessageType.memberJoinedUpdate) {
+      _scheduleRefreshForNewRoom();
+      return;
+    }
+    if (message.type == MessageType.roomPinnedUpdate) {
+      updateRoomPin(message.threadId, true);
+      return;
+    }
+    if (message.type == MessageType.roomUnpinnedUpdate) {
+      updateRoomPin(message.threadId, false);
+      return;
+    }
+    if (message.type == MessageType.roomUpdatedUpdate) {
+      final roomName = metadata?['roomName']?.toString();
+      final avatarUrl = metadata?['avatarUrl']?.toString();
+      updateRoomDetails(
+        message.threadId,
+        roomName: (roomName != null && roomName.isNotEmpty) ? roomName : null,
+        avatarUrl: (avatarUrl != null && avatarUrl.isNotEmpty) ? avatarUrl : null,
+      );
+      return;
+    }
+    if (message.type == MessageType.memberJoinedUpdate ||
+        message.type == MessageType.memberLeftUpdate ||
+        message.type == MessageType.memberRemovedUpdate) {
+      return;
+    }
+
+    final currentUserId = ref.read(globalCurrentUserIdProvider).isNotEmpty
+        ? ref.read(globalCurrentUserIdProvider)
+        : ref.read(currentUserIdProvider);
+    final isMe = message.senderId.isNotEmpty &&
+        _isSameUser(message.senderId, currentUserId);
+
+    final idx = state.indexWhere((c) => c.id == message.threadId || c.threadId == message.threadId);
+    if (idx != -1) {
+      final conversation = state[idx];
+      final updated = conversation.copyWith(
+        lastMessage: ConversationSummary(
+          content: _formatLastMessageContent(message),
+          senderDisplayName: message.senderDisplayName,
+          createdAt: message.createdAt,
+          senderId: message.senderId,
+        ),
+        unreadCount: isMe ? 0 : conversation.unreadCount + 1,
+      );
+      final rest = state.where((c) => c.id != updated.id).toList();
+      state = [..._pinnedFirst(rest), updated, ..._unpinnedFirst(rest)];
+    } else {
+      _scheduleRefreshForNewRoom();
+    }
+  }
+
+  /// Preview tin nhắn cuối theo đúng format API trả về trong danh sách:
+  /// "SenderName : Content". Tin realtime chỉ có content thô nên phải tự ghép.
+  String _formatLastMessageContent(Message message) {
+    final senderName = message.senderDisplayName.trim();
+    if (senderName.isEmpty) return message.content;
+    return '$senderName : ${message.content}';
   }
 
   bool _refreshScheduled = false;
@@ -88,7 +161,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
     try {
       final result = await _listConversationsUseCase();
       if (!ref.mounted) return;
-      state = result.items;
+      state = _mergeConversations(state, result.items);
       _cursor = result.cursor;
       _startListRealtime();
       ref.read(conversationListLoadingProvider.notifier).set(false);
@@ -98,6 +171,42 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
         ref.read(conversationListLoadingProvider.notifier).set(false);
       }
     }
+  }
+
+  List<Conversation> _mergeConversations(
+      List<Conversation> current, List<Conversation> fresh) {
+    if (current.isEmpty) return fresh;
+    final mapCurrent = {for (final c in current) c.id: c};
+    return fresh.map((freshRoom) {
+      final oldRoom = mapCurrent[freshRoom.id];
+      if (oldRoom == null) return freshRoom;
+
+      final oldMemberMap = {for (final p in oldRoom.participants) p.id: p};
+      final mergedParticipants = freshRoom.participants.map((freshMember) {
+        final oldMember = oldMemberMap[freshMember.id];
+        if (oldMember != null &&
+            oldMember.avatarUrl != null &&
+            oldMember.avatarUrl!.isNotEmpty &&
+            (freshMember.avatarUrl == null || freshMember.avatarUrl!.isEmpty)) {
+          return ChatMember(
+            id: freshMember.id,
+            displayName: freshMember.displayName,
+            avatarUrl: oldMember.avatarUrl,
+            acsUserId: freshMember.acsUserId,
+            email: freshMember.email,
+            isAdmin: freshMember is ChatMember ? freshMember.isAdmin : false,
+          );
+        }
+        return freshMember;
+      }).toList();
+
+      return freshRoom.copyWith(
+        participants: mergedParticipants,
+        avatarUrl: (freshRoom.avatarUrl != null && freshRoom.avatarUrl!.isNotEmpty)
+            ? freshRoom.avatarUrl
+            : oldRoom.avatarUrl,
+      );
+    }).toList();
   }
 
   Future<void> loadMore() async {
@@ -129,6 +238,15 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
   void updateRoomPin(String roomId, bool pin) {
     state =
         state.map((c) => c.id == roomId ? c.copyWith(pin: pin) : c).toList();
+  }
+
+  void markAsRead(String roomId) {
+    state = state.map((c) {
+      if (c.id == roomId || c.threadId == roomId) {
+        return c.copyWith(unreadCount: 0);
+      }
+      return c;
+    }).toList();
   }
 
   void removeRoom(String roomId) {
@@ -178,7 +296,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
     final conversation = state[idx];
     final updated = conversation.copyWith(
       lastMessage: ConversationSummary(
-        content: message.content,
+        content: _formatLastMessageContent(message),
         senderDisplayName: message.senderDisplayName,
         createdAt: message.createdAt,
         senderId: message.senderId,
@@ -186,6 +304,13 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
     );
     final rest = state.where((c) => c.id != updated.id).toList();
     state = [..._pinnedFirst(rest), updated, ..._unpinnedFirst(rest)];
+  }
+
+  bool _isSameUser(String raw1, String raw2) {
+    if (raw1.isEmpty || raw2.isEmpty) return false;
+    final clean1 = raw1.startsWith('8:acs:') ? raw1.substring(6) : raw1;
+    final clean2 = raw2.startsWith('8:acs:') ? raw2.substring(6) : raw2;
+    return clean1.trim().toLowerCase() == clean2.trim().toLowerCase();
   }
 
   List<Conversation> _pinnedFirst(List<Conversation> list) =>

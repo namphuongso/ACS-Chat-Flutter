@@ -53,4 +53,10 @@ class HiveIdentityStore {
       await box.put(_key(userId), value);
     }
   }
+
+  Future<void> clearUserData(String userId) async {
+    final box = await _activeBox();
+    if (box == null) return;
+    await box.delete(_key(userId));
+  }
 }

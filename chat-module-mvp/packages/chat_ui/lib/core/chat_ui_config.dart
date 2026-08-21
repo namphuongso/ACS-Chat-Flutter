@@ -43,6 +43,7 @@ class ChatUiConfig {
     this.pinnedMessageBackgroundColor,
     this.pinnedMessageTextColor,
     this.pinnedMessageIconColor,
+    this.highlightBackgroundColor,
     this.surfaceColor,
     this.primaryActionColor,
     this.dangerColor,
@@ -50,6 +51,7 @@ class ChatUiConfig {
     this.dialogBackgroundColor,
     this.formFieldFillColor,
     this.formFieldBorderColor,
+    this.onFileTap,
   });
 
   /// Màu nền bubble tin nhắn của mình (bên phải). `null` = fallback theme.
@@ -126,6 +128,9 @@ class ChatUiConfig {
   /// Màu icon ghim/list trong thanh tin ghim. `null` = fallback (Colors.orange).
   final Color? pinnedMessageIconColor;
 
+  /// Nền highlight dòng tin nhắn (khi jump đến tin nhắn ghim/tìm kiếm). `null` = fallback `Color(0xFFEAECF0)`.
+  final Color? highlightBackgroundColor;
+
   /// Nền card/section trong màn chi tiết room.
   final Color? surfaceColor;
 
@@ -146,6 +151,16 @@ class ChatUiConfig {
 
   /// Viền ô nhập trong form/dialog dùng chung.
   final Color? formFieldBorderColor;
+
+  /// Callback khi người dùng bấm vào tệp đính kèm:
+  /// - `isLargeFile` = `true` khi dung lượng tệp > 5MB.
+  final void Function(
+    BuildContext context, {
+    required String fileName,
+    required String url,
+    required int sizeBytes,
+    required bool isLargeFile,
+  })? onFileTap;
 }
 
 /// Provider cấu hình UI. Host app có thể override để đổi màu bubble.

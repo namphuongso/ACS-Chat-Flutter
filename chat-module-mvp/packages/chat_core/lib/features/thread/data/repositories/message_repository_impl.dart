@@ -3,6 +3,8 @@ import 'dart:async';
 import '../../../conversation_list/domain/entities/conversation.dart';
 import '../../domain/entities/message.dart';
 import '../../domain/entities/pinned_message.dart';
+import '../../domain/entities/message_reader.dart';
+import '../../domain/entities/message_resource.dart';
 import '../../domain/entities/message_reaction.dart';
 import '../../domain/repositories/message_repository.dart';
 import '../datasources/message_local_datasource.dart';
@@ -92,12 +94,13 @@ class MessageRepositoryImpl implements MessageRepository {
     final local = _local;
     if (local == null) return messages;
     try {
+      final validMessages = messages.where(_shouldCacheMessage).toList();
       final cached = await local.getCachedMessages(threadId);
       final pinnedIds = <String>{
         for (final m in cached)
           if (m.pin) m.id,
       };
-      await local.saveMessages(threadId, _mergeById(cached, messages));
+      await local.saveMessages(threadId, _mergeById(cached, validMessages));
       return [
         for (final m in messages)
           if (pinnedIds.contains(m.id)) m.copyWith(pin: true) else m,
@@ -111,6 +114,7 @@ class MessageRepositoryImpl implements MessageRepository {
   Future<void> _appendToCache(String threadId, Message message) async {
     final local = _local;
     if (local == null) return;
+    if (!_shouldCacheMessage(message)) return;
     try {
       final cached = await local.getCachedMessages(threadId);
       // Cache lưu theo thứ tự mới-nhất trước (khớp thứ tự remote/ACS) — tin
@@ -123,6 +127,24 @@ class MessageRepositoryImpl implements MessageRepository {
     } catch (_) {
       // Cache lỗi không nên làm hỏng luồng chính.
     }
+  }
+
+  bool _shouldCacheMessage(Message m) {
+    final content = m.content.trim();
+    if (content.isEmpty && (m.metadata == null || m.metadata!.isEmpty)) {
+      return false;
+    }
+    if (m.type == MessageType.memberJoinedUpdate ||
+        m.type == MessageType.memberLeftUpdate ||
+        m.type == MessageType.memberRemovedUpdate ||
+        m.type == MessageType.roomUpdatedUpdate ||
+        m.type == MessageType.roomPinnedUpdate ||
+        m.type == MessageType.roomUnpinnedUpdate ||
+        m.type == MessageType.reactionUpdate ||
+        m.type == MessageType.messagePinUpdate) {
+      return false;
+    }
+    return true;
   }
 
   List<Message> _mergeById(List<Message> existing, List<Message> incoming) {
@@ -146,11 +168,13 @@ class MessageRepositoryImpl implements MessageRepository {
     required String threadId,
     required String messageId,
     required String content,
+    Map<String, dynamic>? metadata,
   }) async {
     final success = await _remote.updateMessage(
       roomId: roomId,
       messageId: messageId,
       content: content,
+      metadata: metadata,
     );
     final local = _local;
     if (success && local != null) {
@@ -212,6 +236,40 @@ class MessageRepositoryImpl implements MessageRepository {
       _remote.getPinnedMessages(roomId);
 
   @override
+  Future<List<MessageReader>> getMessageReaders({
+    required String roomId,
+    required String messageId,
+    bool? read,
+  }) =>
+      _remote.getMessageReaders(
+        roomId: roomId,
+        messageId: messageId,
+        read: read,
+      );
+
+  @override
+  Future<PaginatedResult<MessageResource>> getMessageResources({
+    required String roomId,
+    required MessageResourceType resourceType,
+    int pageIndex = 1,
+    int pageSize = 50,
+    String? keyword,
+  }) async {
+    final result = await _remote.getMessageResources(
+      roomId: roomId,
+      resourceType: resourceType,
+      pageIndex: pageIndex,
+      pageSize: pageSize,
+      keyword: keyword,
+    );
+    return PaginatedResult<MessageResource>(
+      items: result.items,
+      hasMore: result.hasMore,
+      cursor: result.cursor,
+    );
+  }
+
+  @override
   Future<List<ReactionConfig>> getReactionConfigs() =>
       _remote.getReactionConfigs();
 
@@ -268,6 +326,16 @@ class MessageRepositoryImpl implements MessageRepository {
 
   @override
   Future<void> stopWatchingList() => _realtime.stopWatchingList();
+
+  @override
+  void sendReadMessage(String lastVisibleMessageId) =>
+      _realtime.sendReadMessage(lastVisibleMessageId);
+
+  @override
+  void clearReadMessageState() => _realtime.clearReadMessageState();
+
+  @override
+  void leaveActiveRoom() => _realtime.leaveActiveRoom();
 
   Future<void> dispose() async {
     await _realtime.dispose();

@@ -9,6 +9,15 @@ class MessageType {
   static const html = MessageType._('html');
   static const system = MessageType._('system');
   static const reactionUpdate = MessageType._('reactionUpdate');
+  static const messagePinUpdate = MessageType._('messagePinUpdate');
+  static const roomDisbanded = MessageType._('roomDisbanded');
+  static const roomPinnedUpdate = MessageType._('roomPinnedUpdate');
+  static const roomUnpinnedUpdate = MessageType._('roomUnpinnedUpdate');
+  static const roomUpdatedUpdate = MessageType._('roomUpdatedUpdate');
+  static const memberJoinedUpdate = MessageType._('memberJoinedUpdate');
+  static const memberLeftUpdate = MessageType._('memberLeftUpdate');
+  static const memberRemovedUpdate = MessageType._('memberRemovedUpdate');
+  static const memberRemovedSelf = MessageType._('memberRemovedSelf');
 
   /// Fallback an toàn cho type lạ chưa biết (tương thích ngược khi
   /// server trả type mới mà client cũ chưa hỗ trợ).

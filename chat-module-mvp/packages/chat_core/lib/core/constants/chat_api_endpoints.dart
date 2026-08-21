@@ -7,8 +7,6 @@ abstract final class ChatApiEndpoints {
   static const getContacts = '/api/chat/get-contacts';
   static const getRoomChats = '/api/chat/get-room-chats';
   static const createRoom = '/api/chat/create-room';
-  static String markConversationRead(String id) =>
-      '/api/chat/conversations/$id/read';
 
   /// Ghim/bỏ ghim room — dùng query `roomId` + `pin`.
   static const pinRoom = '/api/chat/pin-room';
@@ -19,7 +17,12 @@ abstract final class ChatApiEndpoints {
   static const addParticipants = '/api/chat/add-participants';
   static const removeParticipants = '/api/chat/remove-participants';
   static const transferOwnership = '/api/chat/transfer-ownership';
+  static const setRoleAdmin = '/api/chat/set-role-admin';
   static String leaveRoom(String roomId) => '/api/chat/leave-room/$roomId';
+
+  /// Đóng (khóa) room — giải tán nhóm, không cho gửi tin/tham gia thêm
+  /// (API docs mục 23).
+  static String closeRoom(String roomId) => '/api/chat/close-room/$roomId';
   static const uploadFiles = '/api/files/uploads';
   static const createUploadSession = '/api/files/create-upload-session';
   static const completeUpload = '/api/files/complete-upload';
@@ -41,6 +44,9 @@ abstract final class ChatApiEndpoints {
   /// Danh sách tin đang ghim trong room — path param `roomId`.
   static String getPinnedMessages(String roomId) =>
       '/api/chat/get-pinned-messages/$roomId';
+
+  static const getReader = '/api/chat/get-reader';
+  static const getMessageResources = '/api/chat/get-message-resources';
 
   /// ACS Chat REST — dùng chung với [ChatAccessToken.endpoint] làm base.
   static String acsThreadMessages(String threadId) =>

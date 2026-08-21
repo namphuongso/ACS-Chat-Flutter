@@ -9,13 +9,24 @@ import 'package:hive/hive.dart';
 /// `Hive.initFlutter()` (NPP main đã gọi). Nếu box không mở được (Hive chưa
 /// init), mọi thao tác trở thành no-op → module vẫn chạy, chỉ mất cache.
 class HiveConversationLocalDataSource implements ConversationLocalDataSource {
-  HiveConversationLocalDataSource({Box<String>? box}) : _box = box;
+  HiveConversationLocalDataSource({
+    this.userId,
+    Box<String>? box,
+  }) : _box = box;
 
+  final String? userId;
   Box<String>? _box;
   bool _unavailable = false;
 
   static const _boxName = 'chat_conversations';
-  static const _key = 'conversations';
+  static const _defaultKey = 'conversations';
+
+  String get _key {
+    if (userId != null && userId!.isNotEmpty) {
+      return '$userId:conversations';
+    }
+    return _defaultKey;
+  }
 
   Future<Box<String>?> _activeBox() async {
     if (_unavailable) return null;
@@ -62,6 +73,13 @@ class HiveConversationLocalDataSource implements ConversationLocalDataSource {
     final box = await _activeBox();
     if (box == null) return;
     await box.delete(_key);
+  }
+
+  Future<void> clearUserData(String targetUserId) async {
+    final box = await _activeBox();
+    if (box == null) return;
+    await box.delete('$targetUserId:conversations');
+    await box.delete(_defaultKey);
   }
 
   Map<String, dynamic> _conversationToJson(Conversation c) => {

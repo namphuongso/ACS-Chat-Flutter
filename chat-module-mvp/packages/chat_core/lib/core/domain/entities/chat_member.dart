@@ -8,15 +8,20 @@ class ChatMember extends ChatUser {
     super.acsUserId,
     super.email,
     this.isAdmin = false,
+    this.isOwner = false,
   });
 
   final bool isAdmin;
+  final bool isOwner;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      (other is ChatMember && other.id == id && other.isAdmin == isAdmin);
+      (other is ChatMember &&
+          other.id == id &&
+          other.isAdmin == isAdmin &&
+          other.isOwner == isOwner);
 
   @override
-  int get hashCode => id.hashCode ^ isAdmin.hashCode;
+  int get hashCode => id.hashCode ^ isAdmin.hashCode ^ isOwner.hashCode;
 }

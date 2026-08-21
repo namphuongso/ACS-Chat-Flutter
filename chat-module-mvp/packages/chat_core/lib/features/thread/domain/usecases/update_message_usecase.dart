@@ -9,11 +9,13 @@ class UpdateMessageUseCase {
     required String threadId,
     required String messageId,
     required String content,
+    Map<String, dynamic>? metadata,
   }) =>
       _repository.updateMessage(
         roomId: roomId,
         threadId: threadId,
         messageId: messageId,
         content: content,
+        metadata: metadata,
       );
 }

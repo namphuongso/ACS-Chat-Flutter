@@ -136,8 +136,19 @@ class JsonApiClient {
       );
     }
     if (allowEmptyBody && response.body.isEmpty) return null;
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
-    return json['data'];
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) {
+        return decoded.containsKey('data') ? decoded['data'] : decoded;
+      }
+      return decoded;
+    } catch (e) {
+      throw ChatApiException(
+        statusCode: response.statusCode,
+        code: 'INVALID_RESPONSE',
+        message: 'Không thể giải mã dữ liệu phản hồi từ server: $e',
+      );
+    }
   }
 
   Map<String, dynamic>? _tryDecode(String body) {

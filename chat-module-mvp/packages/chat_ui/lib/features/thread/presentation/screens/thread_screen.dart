@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:developer' as developer;
-import 'dart:io';
 
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter/material.dart';
@@ -12,13 +11,19 @@ import '../../../../core/widgets/offline_banner.dart';
 import '../../../../core/widgets/skeleton.dart';
 import '../../../../core/widgets/chat_dialogs.dart';
 import '../../../../core/utils/avatar_utils.dart';
+import '../../../../core/chat_route_observer.dart' show chatRouteObserver;
 import '../../../../core/chat_ui_config.dart';
 import '../../../conversation_list/presentation/providers/conversation_providers.dart';
 import '../providers/thread_providers.dart';
 import '../notifiers/thread_messages_notifier.dart';
 import '../../../shared/presentation/providers/connectivity_providers.dart';
+import '../widgets/message_actions_sheet.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
+import '../widgets/message_readers_sheet.dart';
+import '../widgets/pinned_messages_sheet.dart';
+import '../widgets/upload_error_listener.dart';
+import '../widgets/upload_progress_banner.dart';
 import 'room_settings_screen.dart';
 
 class ThreadScreen extends StatefulWidget {
@@ -80,13 +85,450 @@ class _ThreadScreenContent extends ConsumerStatefulWidget {
       _ThreadScreenContentState();
 }
 
-class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
+class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
+    with WidgetsBindingObserver, RouteAware {
   final _itemScrollController = ItemScrollController();
   final _itemPositionsListener = ItemPositionsListener.create();
   int _currentPinnedIndex = 0;
+
+  bool _isSearching = false;
+  bool _isSearchingDeeper = false;
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
+  Timer? _searchDebounce;
+  List<Message> _searchResults = [];
+  int _currentSearchIndex = -1;
+  String? _highlightedMessageId;
+  Timer? _highlightTimer;
+
+  bool _showScrollToBottomButton = false;
+  int _unreadNewMessagesCount = 0;
+
+  void _highlightMessage(String messageId) {
+    _highlightTimer?.cancel();
+    setState(() {
+      _highlightedMessageId = messageId;
+    });
+    _highlightTimer = Timer(const Duration(milliseconds: 3000), () {
+      if (mounted && _highlightedMessageId == messageId) {
+        setState(() {
+          _highlightedMessageId = null;
+        });
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _itemPositionsListener.itemPositions.addListener(_updateScrollBottomState);
+  }
+
+  void _updateScrollBottomState() {
+    final positions = _itemPositionsListener.itemPositions.value;
+    if (positions.isEmpty) return;
+    final isAtBottom = positions.any((p) => p.index == 0);
+    if (isAtBottom) {
+      if (_showScrollToBottomButton || _unreadNewMessagesCount > 0) {
+        setState(() {
+          _showScrollToBottomButton = false;
+          _unreadNewMessagesCount = 0;
+        });
+      }
+    } else {
+      if (!_showScrollToBottomButton) {
+        setState(() {
+          _showScrollToBottomButton = true;
+        });
+      }
+    }
+
+    final notifier = ref.read(threadMessagesProvider.notifier);
+    final messageCount = ref.read(threadMessagesProvider).length;
+    final maxIndex =
+        positions.map((p) => p.index).reduce((a, b) => a > b ? a : b);
+    if (messageCount > 0 &&
+        maxIndex >= messageCount - 5 &&
+        notifier.hasMore &&
+        !notifier.isLoadingOlder) {
+      notifier.loadOlder();
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route != null) {
+      chatRouteObserver.subscribe(this, route);
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _highlightTimer?.cancel();
+    _itemPositionsListener.itemPositions
+        .removeListener(_updateScrollBottomState);
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    chatRouteObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
+    try {
+      ref.read(messageRepositoryProvider).leaveActiveRoom();
+    } catch (_) {}
+    FocusManager.instance.primaryFocus?.unfocus();
+    super.dispose();
+  }
+
+  void _openMessageSearch() {
+    setState(() {
+      _isSearching = true;
+      _searchResults = [];
+      _currentSearchIndex = -1;
+      _highlightedMessageId = null;
+    });
+    Future.microtask(() {
+      if (mounted) {
+        _searchFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _closeMessageSearch() {
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    _searchFocusNode.unfocus();
+    setState(() {
+      _isSearching = false;
+      _isSearchingDeeper = false;
+      _searchResults = [];
+      _currentSearchIndex = -1;
+      _highlightedMessageId = null;
+    });
+  }
+
+  void _onSearchInputChanged(String query) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (mounted) {
+        _performMessageSearch(query);
+      }
+    });
+  }
+
+  int _searchSequence = 0;
+
+  List<Message> _filterMessages(List<Message> messages, String trimmedQuery) {
+    return messages.where((m) {
+      if (m.isDeleted) return false;
+      final contentMatch = m.content.toLowerCase().contains(trimmedQuery);
+      final fileNameMatch = m.metadata != null &&
+          (m.metadata!['fileName']
+                  ?.toString()
+                  .toLowerCase()
+                  .contains(trimmedQuery) ??
+              false);
+      return contentMatch || fileNameMatch;
+    }).toList();
+  }
+
+  Future<void> _performMessageSearch(String query) async {
+    final currentSeq = ++_searchSequence;
+    final trimmed = query.trim().toLowerCase();
+    if (trimmed.isEmpty) {
+      setState(() {
+        _searchResults = [];
+        _currentSearchIndex = -1;
+        _highlightedMessageId = null;
+        _isSearchingDeeper = false;
+      });
+      return;
+    }
+
+    final allMessages = ref.read(threadMessagesProvider);
+    var matches = _filterMessages(allMessages, trimmed);
+
+    if (matches.isNotEmpty) {
+      setState(() {
+        _searchResults = matches;
+        _currentSearchIndex = 0;
+        _isSearchingDeeper = false;
+      });
+      _jumpToSearchResult(0);
+      return;
+    }
+
+    final notifier = ref.read(threadMessagesProvider.notifier);
+    if (notifier.hasReachedEnd) {
+      setState(() {
+        _searchResults = [];
+        _currentSearchIndex = -1;
+        _highlightedMessageId = null;
+        _isSearchingDeeper = false;
+      });
+      return;
+    }
+
+    // Tự động quét sâu thêm vào lịch sử tin nhắn cũ hơn trong background
+    setState(() {
+      _searchResults = [];
+      _currentSearchIndex = -1;
+      _highlightedMessageId = null;
+      _isSearchingDeeper = true;
+    });
+
+    int pagesFetched = 0;
+    while (pagesFetched < 8 && !notifier.hasReachedEnd && mounted) {
+      if (_searchSequence != currentSeq || !_isSearching) break;
+
+      final prevCount = ref.read(threadMessagesProvider).length;
+      await notifier.loadOlder();
+      final newCount = ref.read(threadMessagesProvider).length;
+      pagesFetched++;
+
+      if (!mounted || _searchSequence != currentSeq || !_isSearching) break;
+
+      final updatedMessages = ref.read(threadMessagesProvider);
+      matches = _filterMessages(updatedMessages, trimmed);
+
+      if (matches.isNotEmpty) {
+        setState(() {
+          _searchResults = matches;
+          _currentSearchIndex = 0;
+          _isSearchingDeeper = false;
+        });
+        _jumpToSearchResult(0);
+        return;
+      }
+
+      if (newCount == prevCount) break;
+    }
+
+    if (mounted && _searchSequence == currentSeq) {
+      setState(() {
+        _isSearchingDeeper = false;
+      });
+    }
+  }
+
+  List<Message> _getVisibleMessages(List<Message> messages) {
+    final roomId = ref.read(roomIdProvider);
+    final conversation = ref
+        .read(conversationListProvider)
+        .where((c) => c.id == roomId)
+        .firstOrNull;
+    final isGroupConversation = conversation?.type == ConversationType.group ||
+        (conversation?.participants.length ?? 0) > 2;
+
+    return messages.where((message) {
+      if (message.type == MessageType.memberJoinedUpdate ||
+          message.type == MessageType.memberLeftUpdate ||
+          message.type == MessageType.memberRemovedUpdate ||
+          message.type == MessageType.roomUpdatedUpdate ||
+          message.type == MessageType.roomPinnedUpdate ||
+          message.type == MessageType.roomUnpinnedUpdate ||
+          message.type == MessageType.reactionUpdate ||
+          message.type == MessageType.messagePinUpdate) {
+        return false;
+      }
+      if (message.content.trim().isEmpty &&
+          (message.metadata == null || message.metadata!.isEmpty)) {
+        return false;
+      }
+      if (!isGroupConversation && message.type == MessageType.system) {
+        return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  Future<void> _jumpToSearchResult(int resultIndex) async {
+    if (resultIndex < 0 || resultIndex >= _searchResults.length) return;
+    final targetMessage = _searchResults[resultIndex];
+    final notifier = ref.read(threadMessagesProvider.notifier);
+
+    var allMessages = ref.read(threadMessagesProvider);
+    var visible = _getVisibleMessages(allMessages);
+    var index = visible.indexWhere((m) => m.id == targetMessage.id);
+
+    if (index == -1) {
+      final found =
+          await notifier.loadUntilMessage(messageId: targetMessage.id);
+      if (!found || !mounted) return;
+      allMessages = ref.read(threadMessagesProvider);
+      visible = _getVisibleMessages(allMessages);
+      index = visible.indexWhere((m) => m.id == targetMessage.id);
+      if (index == -1) return;
+    }
+
+    final scrollIndex = visible.length - 1 - index;
+
+    setState(() {
+      _currentSearchIndex = resultIndex;
+      _highlightedMessageId = targetMessage.id;
+    });
+
+    _scrollToMessage(scrollIndex);
+  }
+
+  void _navigateSearchPrevious() {
+    if (_searchResults.isEmpty) return;
+    final nextIndex = (_currentSearchIndex + 1) % _searchResults.length;
+    _jumpToSearchResult(nextIndex);
+  }
+
+  void _navigateSearchNext() {
+    if (_searchResults.isEmpty) return;
+    final prevIndex = (_currentSearchIndex - 1 + _searchResults.length) %
+        _searchResults.length;
+    _jumpToSearchResult(prevIndex);
+  }
+
+  static String _formatSearchResultDate(DateTime date) {
+    final h = date.hour.toString().padLeft(2, '0');
+    final m = date.minute.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    final mo = date.month.toString().padLeft(2, '0');
+    return '$h:$m $d/$mo';
+  }
+
+  void _showSearchResultsSheet(BuildContext context) {
+    if (_searchResults.isEmpty) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.5,
+        minChildSize: 0.3,
+        maxChildSize: 0.85,
+        expand: false,
+        builder: (_, scrollController) => Column(
+          children: [
+            Container(
+              margin: const EdgeInsets.symmetric(vertical: 8),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Text(
+                'Tìm thấy ${_searchResults.length} tin nhắn',
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: ListView.separated(
+                controller: scrollController,
+                itemCount: _searchResults.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (_, index) {
+                  final msg = _searchResults[index];
+                  final isSelected = index == _currentSearchIndex;
+                  return ListTile(
+                    selected: isSelected,
+                    selectedTileColor: Colors.orange.shade50,
+                    title: Text(
+                      msg.senderDisplayName.isNotEmpty
+                          ? msg.senderDisplayName
+                          : 'Người dùng',
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: Text(
+                      msg.content,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                    trailing: Text(
+                      _formatSearchResultDate(msg.createdAt),
+                      style:
+                          TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _jumpToSearchResult(index);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void didPushNext() {
+    // Chuyển sang màn hình khác đè lên (vd: Màn hình chi tiết room / cài đặt phòng / xem ảnh)
+    try {
+      ref.read(messageRepositoryProvider).leaveActiveRoom();
+    } catch (_) {}
+  }
+
+  @override
+  void didPopNext() {
+    // Quay lại màn hình chat từ màn hình chi tiết/cài đặt
+    if (mounted) {
+      try {
+        ref.read(threadMessagesProvider.notifier).sendReadMessageIfNeeded();
+      } catch (_) {}
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      try {
+        ref.read(messageRepositoryProvider).leaveActiveRoom();
+      } catch (_) {}
+    } else if (state == AppLifecycleState.resumed) {
+      if (mounted) {
+        try {
+          ref.read(threadMessagesProvider.notifier).sendReadMessageIfNeeded();
+        } catch (_) {}
+      }
+    }
+  }
+
+  /// Mở cuộc trò chuyện vừa được tạo từ trang tùy chọn phòng
+  /// (ví dụ "Tạo cuộc trò chuyện" từ room 1-1).
+  Future<void> _openConversation(Conversation conversation) async {
+    final otherParticipants = conversation.participants
+        .where((participant) => participant.id != widget.currentUserId);
+    final title = conversation.roomName.isNotEmpty
+        ? conversation.roomName
+        : (otherParticipants.isNotEmpty
+            ? otherParticipants
+                .map((participant) => participant.displayName)
+                .join(', ')
+            : 'Phòng chat');
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ThreadScreen(
+          roomId: conversation.id,
+          threadId: conversation.threadId,
+          title: title,
+          currentUserId: widget.currentUserId,
+          senderAvatarUrl: conversation.avatarUrl,
+        ),
+      ),
+    );
   }
 
   /// Nhảy tới đúng vị trí tin nhắn (banner tin ghim / danh sách tin ghim).
@@ -94,13 +536,32 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
   /// trong builder, `reverse: true` → index 0 là tin mới nhất) — ListView
   /// lazy trước đây phải ước lượng 75px/item + ensureVisible nên nhảy sai.
   void _scrollToMessage(int itemIndex) {
-    if (!_itemScrollController.isAttached) return;
-    _itemScrollController.scrollTo(
-      index: itemIndex,
-      alignment: 0.5,
-      duration: const Duration(milliseconds: 300),
-      curve: Curves.easeInOut,
-    );
+    if (itemIndex < 0) return;
+    void doScroll() {
+      if (!_itemScrollController.isAttached) return;
+      _itemScrollController.scrollTo(
+        index: itemIndex,
+        alignment: 0.5,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    }
+
+    if (_itemScrollController.isAttached) {
+      doScroll();
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_itemScrollController.isAttached) {
+          doScroll();
+        } else {
+          Future.delayed(const Duration(milliseconds: 100), () {
+            if (_itemScrollController.isAttached) {
+              doScroll();
+            }
+          });
+        }
+      });
+    }
   }
 
   /// Đang ở đáy danh sách tin nhắn (tin mới nhất index 0 đang hiển thị).
@@ -109,19 +570,77 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
     return positions.any((p) => p.index == 0);
   }
 
-  @override
-  void dispose() {
-    // Đóng bàn phím khi rời khỏi màn hình chat — trước đây back ra ngoài
-    // bàn phím vẫn hiện vì TextField bị dispose khiến FocusManager treo.
-    FocusManager.instance.primaryFocus?.unfocus();
-    super.dispose();
-  }
-
   String _normalizeAcsId(String id) {
     if (id.startsWith('8:acs:')) {
       return id.substring(6);
     }
     return id;
+  }
+
+  bool _isSameUser(String raw1, String raw2) {
+    if (raw1.isEmpty || raw2.isEmpty) return false;
+    final clean1 = raw1.startsWith('8:acs:') ? raw1.substring(6) : raw1;
+    final clean2 = raw2.startsWith('8:acs:') ? raw2.substring(6) : raw2;
+    return clean1.trim().toLowerCase() == clean2.trim().toLowerCase();
+  }
+
+  bool _isCurrentUserCurrentlyRemoved(
+    List<Message> messages,
+    String currentUserId,
+    String? myAcsUserId,
+  ) {
+    if (messages.isEmpty) return false;
+
+    for (final m in messages.reversed) {
+      final metadata = m.metadata;
+      final payload = (metadata?['payload'] is Map)
+          ? metadata!['payload'] as Map
+          : <String, dynamic>{};
+      final eventType = metadata?['eventType']?.toString();
+      final removedUserId =
+          (metadata?['removedUserId'] ?? payload['removedUserId'] ?? '')
+              .toString();
+      final addedUsers =
+          (metadata?['addedUsers'] ?? payload['addedUsers']) as List? ??
+              const [];
+      final addedUserIds =
+          ((metadata?['addedUserIds'] ?? payload['addedUserIds']) as List? ??
+                  const [])
+              .map((e) => e.toString())
+              .toList();
+
+      if (m.type == MessageType.roomDisbanded) {
+        return true;
+      }
+
+      final isSelfRemoved = metadata?['isSelf'] == true ||
+          (eventType == 'MemberRemoved' &&
+              removedUserId.isNotEmpty &&
+              (_isSameUser(removedUserId, currentUserId) ||
+                  (myAcsUserId != null &&
+                      _isSameUser(removedUserId, myAcsUserId))));
+
+      if (isSelfRemoved) {
+        return true;
+      }
+
+      final isSelfJoined = eventType == 'MemberJoined' &&
+          (addedUsers.any((u) =>
+                  u is Map &&
+                  (_isSameUser((u['userId'] ?? '').toString(), currentUserId) ||
+                      (myAcsUserId != null &&
+                          _isSameUser(
+                              (u['userId'] ?? '').toString(), myAcsUserId)))) ||
+              addedUserIds.any((id) =>
+                  _isSameUser(id, currentUserId) ||
+                  (myAcsUserId != null && _isSameUser(id, myAcsUserId))));
+
+      if (isSelfJoined) {
+        return false;
+      }
+    }
+
+    return false;
   }
 
   String? _getSenderAvatar(Message message) {
@@ -162,7 +681,6 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
     required bool canEdit,
   }) async {
     final config = ref.read(chatUiConfigProvider);
-    final messenger = ScaffoldMessenger.of(context);
     final danger = config.dangerColor ?? Colors.redAccent;
     final primary =
         config.primaryActionColor ?? Theme.of(context).colorScheme.primary;
@@ -181,12 +699,15 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
       if (myReactionCode == null || myReactionCode.isEmpty) {
         final myAcs = _normalizeAcsId(notifier.myAcsUserId ?? '');
         final myUser = _normalizeAcsId(widget.currentUserId);
-        myReactionCode = reactions.where((r) {
-          final rId = _normalizeAcsId(r.userId);
-          return r.userId == widget.currentUserId ||
-              (myAcs.isNotEmpty && rId == myAcs) ||
-              rId == myUser;
-        }).firstOrNull?.reactionCode;
+        myReactionCode = reactions
+            .where((r) {
+              final rId = _normalizeAcsId(r.userId);
+              return r.userId == widget.currentUserId ||
+                  (myAcs.isNotEmpty && rId == myAcs) ||
+                  rId == myUser;
+            })
+            .firstOrNull
+            ?.reactionCode;
       }
     } catch (_) {}
     if (!mounted) return;
@@ -202,13 +723,14 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
       context: context,
       barrierColor: Colors.black45,
       builder: (dialogContext) {
-        return StatefulBuilder(builder: (context, setOverlayState) {
+        return StatefulBuilder(builder: (overlayContext, setOverlayState) {
           Future<void> selectReaction(int index) async {
             if (index < 0 || index >= reactionConfigs.length) return;
             final reaction = reactionConfigs[index];
-            final reactionIdToPass = (reaction.id != null && reaction.id!.isNotEmpty)
-                ? reaction.id!
-                : reaction.code;
+            final reactionIdToPass =
+                (reaction.id != null && reaction.id!.isNotEmpty)
+                    ? reaction.id!
+                    : reaction.code;
             final selected = myReactionCode == reaction.code ||
                 (reaction.id != null && myReactionCode == reaction.id);
             Navigator.pop(dialogContext);
@@ -244,177 +766,261 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                     ),
                   ),
                   // 1. Center/Appear Area: Floating Reaction Bar + Target Message Bubble (Nằm ngoài BottomSheet)
-                Align(
-                  alignment: Alignment.center,
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: isMe
-                          ? CrossAxisAlignment.end
-                          : CrossAxisAlignment.start,
-                      children: [
-                        // Reaction Bar (Khung thả cảm xúc dạng floating pill)
-                        if (reactionConfigs.isNotEmpty)
-                          Center(
-                            child: Material(
-                              color: config.surfaceColor ?? Colors.white,
-                              elevation: 12,
-                              borderRadius: BorderRadius.circular(28),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                child: SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  physics: const BouncingScrollPhysics(),
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onHorizontalDragUpdate: (details) {
-                                      final index =
-                                          (details.localPosition.dx / 44)
-                                              .floor();
-                                      final safeIndex = index.clamp(
-                                        0,
-                                        reactionConfigs.length - 1,
-                                      );
-                                      if (safeIndex != hoveredReactionIndex) {
-                                        setOverlayState(
-                                          () =>
-                                              hoveredReactionIndex = safeIndex,
+                  Align(
+                    alignment: Alignment.center,
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: isMe
+                            ? CrossAxisAlignment.end
+                            : CrossAxisAlignment.start,
+                        children: [
+                          // Reaction Bar (Khung thả cảm xúc dạng floating pill)
+                          if (reactionConfigs.isNotEmpty)
+                            Center(
+                              child: Material(
+                                color: config.surfaceColor ?? Colors.white,
+                                elevation: 12,
+                                borderRadius: BorderRadius.circular(28),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.horizontal,
+                                    physics: const BouncingScrollPhysics(),
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onHorizontalDragUpdate: (details) {
+                                        final index =
+                                            (details.localPosition.dx / 44)
+                                                .floor();
+                                        final safeIndex = index.clamp(
+                                          0,
+                                          reactionConfigs.length - 1,
                                         );
-                                      }
-                                    },
-                                    onHorizontalDragEnd: (_) {
-                                      selectReaction(hoveredReactionIndex);
-                                    },
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        for (var index = 0;
-                                            index < reactionConfigs.length;
-                                            index++)
-                                          _ReactionPickerItem(
-                                            reaction: reactionConfigs[index],
-                                            isSelected: myReactionCode ==
-                                                reactionConfigs[index].code,
-                                            isHovered:
-                                                hoveredReactionIndex == index,
-                                            primaryColor: primary,
-                                            onHover: (hovering) {
-                                              setOverlayState(() {
-                                                hoveredReactionIndex =
-                                                    hovering ? index : -1;
-                                              });
-                                            },
-                                            onTap: () => selectReaction(index),
-                                          ),
-                                      ],
+                                        if (safeIndex != hoveredReactionIndex) {
+                                          setOverlayState(
+                                            () => hoveredReactionIndex =
+                                                safeIndex,
+                                          );
+                                        }
+                                      },
+                                      onHorizontalDragEnd: (_) {
+                                        selectReaction(hoveredReactionIndex);
+                                      },
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          for (var index = 0;
+                                              index < reactionConfigs.length;
+                                              index++)
+                                            ReactionPickerItem(
+                                              reaction: reactionConfigs[index],
+                                              isSelected: myReactionCode ==
+                                                  reactionConfigs[index].code,
+                                              isHovered:
+                                                  hoveredReactionIndex == index,
+                                              primaryColor: primary,
+                                              onHover: (hovering) {
+                                                setOverlayState(() {
+                                                  hoveredReactionIndex =
+                                                      hovering ? index : -1;
+                                                });
+                                              },
+                                              onTap: () =>
+                                                  selectReaction(index),
+                                            ),
+                                        ],
+                                      ),
                                     ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        const SizedBox(height: 12),
+                          const SizedBox(height: 12),
 
-                        // Message Bubble (Tin nhắn được chọn nằm ngoài BottomSheet, hiển thị Avatar đầy đủ)
-                        IgnorePointer(
-                          child: MessageBubble(
-                            message: message,
-                            isMe: isMe,
-                            senderAvatarUrl: senderAvatar,
-                            showSenderAvatar: true,
-                            reactionSummary:
-                                notifier.reactionSummaryFor(message.id),
+                          // Message Bubble (Tin nhắn được chọn nằm ngoài BottomSheet, hiển thị Avatar đầy đủ)
+                          IgnorePointer(
+                            child: MessageBubble(
+                              message: message,
+                              isMe: isMe,
+                              senderAvatarUrl: senderAvatar,
+                              showSenderAvatar: true,
+                              reactionSummary:
+                                  notifier.reactionSummaryFor(message.id),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 80), // Chừa khoảng trống cho BottomSheet phía dưới
-                      ],
+                          const SizedBox(
+                              height:
+                                  80), // Chừa khoảng trống cho BottomSheet phía dưới
+                        ],
+                      ),
                     ),
                   ),
-                ),
 
-                // 2. Bottom Area: Action Sheet hiển thị dạng BottomSheet ở đáy (Chứa 4 nút icon tròn ban đầu)
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Material(
-                      color: config.surfaceColor ?? Colors.white,
-                      elevation: 12,
-                      borderRadius: BorderRadius.circular(20),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 14,
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            _MessageActionButton(
-                              icon: Icons.content_copy_rounded,
-                              label: 'Sao chép',
-                              onTap: () {
-                                Navigator.pop(dialogContext);
-                                Clipboard.setData(
-                                    ClipboardData(text: message.content));
-                                if (mounted) {
-                                  showChatToast(
-                                    context,
-                                    message: 'Đã sao chép tin nhắn',
-                                    config: config,
-                                  );
-                                }
-                              },
-                            ),
-                            _MessageActionButton(
-                              icon: Icons.edit_outlined,
-                              label: 'Sửa tin',
-                              isDisabled: !canEdit,
-                              onTap: () {
-                                Navigator.pop(dialogContext);
-                                if (canEdit) _editMessage(context, message);
-                              },
-                            ),
-                            _MessageActionButton(
-                              icon: Icons.delete_outline_rounded,
-                              label: 'Xoá tin',
-                              iconColor:
-                                  canEdit ? danger : Colors.grey.shade400,
-                              isDisabled: !canEdit,
-                              onTap: () {
-                                Navigator.pop(dialogContext);
-                                if (canEdit) _deleteMessage(context, message);
-                              },
-                            ),
-                            _MessageActionButton(
-                              icon: message.pin
-                                  ? Icons.push_pin_rounded
-                                  : Icons.push_pin_outlined,
-                              label: message.pin ? 'Bỏ ghim' : 'Ghim tin',
-                              iconColor: primary,
-                              onTap: () {
-                                Navigator.pop(dialogContext);
-                                _togglePin(
-                                    messenger, message.id, !message.pin);
-                              },
-                            ),
-                          ],
+                  // 2. Bottom Area: Action Sheet hiển thị dạng BottomSheet ở đáy (Chứa 4 nút icon tròn ban đầu)
+                  Align(
+                    alignment: Alignment.bottomCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Material(
+                        color: config.surfaceColor ?? Colors.white,
+                        elevation: 12,
+                        borderRadius: BorderRadius.circular(20),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 14,
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              MessageActionButton(
+                                icon: Icons.content_copy_rounded,
+                                label: 'Sao chép',
+                                onTap: () {
+                                  Navigator.pop(dialogContext);
+                                  Clipboard.setData(
+                                      ClipboardData(text: message.content));
+                                  if (mounted) {
+                                    showChatToast(
+                                      context,
+                                      message: 'Đã sao chép tin nhắn',
+                                      config: config,
+                                    );
+                                  }
+                                },
+                              ),
+                              MessageActionButton(
+                                icon: Icons.edit_outlined,
+                                label: 'Sửa tin',
+                                isDisabled: !canEdit,
+                                onTap: () {
+                                  Navigator.pop(dialogContext);
+                                  if (canEdit) _editMessage(context, message);
+                                },
+                              ),
+                              MessageActionButton(
+                                icon: Icons.delete_outline_rounded,
+                                label: 'Xoá tin',
+                                iconColor:
+                                    canEdit ? danger : Colors.grey.shade400,
+                                isDisabled: !canEdit,
+                                onTap: () {
+                                  Navigator.pop(dialogContext);
+                                  if (canEdit) _deleteMessage(context, message);
+                                },
+                              ),
+                              MessageActionButton(
+                                icon: Icons.more_horiz_rounded,
+                                label: 'Khác',
+                                iconColor: primary,
+                                onTap: () async {
+                                  developer.log(
+                                      '[MessageAction] Tapped Khác option button');
+                                  Navigator.pop(dialogContext);
+                                  await Future.delayed(
+                                      const Duration(milliseconds: 100));
+                                  if (!mounted) return;
+                                  _showMoreOptionsMenu(context, message);
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
+          );
+        });
+      },
+    );
+  }
+
+  void _showMoreOptionsMenu(BuildContext context, Message message) {
+    final parentContext = context;
+    final messenger = ScaffoldMessenger.of(parentContext);
+    final config = ref.read(chatUiConfigProvider);
+    final primary =
+        config.primaryActionColor ?? config.iconColor ?? Colors.blue;
+    final roomId = ref.read(roomIdProvider);
+
+    developer.log(
+        '[MessageAction] Opening _showMoreOptionsMenu for messageId=${message.id}, roomId=$roomId');
+
+    showModalBottomSheet<void>(
+      context: parentContext,
+      useRootNavigator: true,
+      backgroundColor: config.surfaceColor ?? Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: Icon(
+                  message.pin
+                      ? Icons.push_pin_rounded
+                      : Icons.push_pin_outlined,
+                  color: primary,
+                ),
+                title: Text(message.pin ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'),
+                onTap: () {
+                  developer.log('[MessageAction] Tapped Ghim/Bỏ ghim option');
+                  Navigator.pop(sheetContext);
+                  _togglePin(messenger, message.id, !message.pin);
+                },
+              ),
+              ListTile(
+                leading: Icon(
+                  Icons.remove_red_eye_outlined,
+                  color: primary,
+                ),
+                title: const Text('Danh sách người xem'),
+                onTap: () async {
+                  developer
+                      .log('[MessageAction] Tapped Danh sách người xem option');
+                  Navigator.pop(sheetContext);
+                  await Future.delayed(const Duration(milliseconds: 100));
+                  if (!parentContext.mounted) {
+                    developer.log(
+                        '[MessageAction] parentContext is no longer mounted!');
+                    return;
+                  }
+                  developer.log(
+                      '[MessageAction] Showing MessageReadersSheet for roomId=$roomId, messageId=${message.id}');
+                  MessageReadersSheet.show(
+                    context: parentContext,
+                    roomId: roomId,
+                    messageId: message.id,
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
           ),
         );
-      });
-    },
-  );
+      },
+    );
   }
 
   /// Xoá tin nhắn (chỉ tin của mình). Hỏi xác nhận trước khi xoá — sau khi
@@ -508,7 +1114,8 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                     alignment: Alignment.centerLeft,
                     child: Text(
                       'Cảm xúc về tin nhắn',
-                      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+                      style:
+                          TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
                     ),
                   ),
                 ),
@@ -523,13 +1130,15 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                       final myAcs = _normalizeAcsId(notifier.myAcsUserId ?? '');
                       final myUser = _normalizeAcsId(widget.currentUserId);
                       final rId = _normalizeAcsId(reaction.userId);
-                      final isMeReaction = reaction.userId == widget.currentUserId ||
-                          (myAcs.isNotEmpty && rId == myAcs) ||
-                          rId == myUser;
+                      final isMeReaction =
+                          reaction.userId == widget.currentUserId ||
+                              (myAcs.isNotEmpty && rId == myAcs) ||
+                              rId == myUser;
                       return ListTile(
                         leading: CircleAvatar(
-                          backgroundImage:
-                              isNetworkAvatar(avatar) ? NetworkImage(avatar!) : null,
+                          backgroundImage: isNetworkAvatar(avatar)
+                              ? NetworkImage(avatar!)
+                              : null,
                           child: isNetworkAvatar(avatar)
                               ? null
                               : Text(reaction.contactName.isEmpty
@@ -544,17 +1153,21 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                         subtitle: isMeReaction
                             ? const Text(
                                 'Nhấn để gỡ cảm xúc',
-                                style: TextStyle(fontSize: 12, color: Colors.grey),
+                                style:
+                                    TextStyle(fontSize: 12, color: Colors.grey),
                               )
                             : null,
                         onTap: isMeReaction
                             ? () async {
                                 Navigator.pop(sheetContext);
-                                final ok = await notifier.reactMessage(message.id, '');
+                                final ok =
+                                    await notifier.reactMessage(message.id, '');
                                 if (!mounted) return;
                                 showChatToast(
                                   context,
-                                  message: ok ? 'Đã gỡ cảm xúc' : 'Không thể gỡ cảm xúc',
+                                  message: ok
+                                      ? 'Đã gỡ cảm xúc'
+                                      : 'Không thể gỡ cảm xúc',
                                   isError: !ok,
                                   config: config,
                                 );
@@ -632,22 +1245,66 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
       final roomStillExists = next.any((c) => c.id == roomId);
       if (!roomStillExists && mounted) {
         final route = ModalRoute.of(context);
-        if (route != null && route.isCurrent && Navigator.of(context).canPop()) {
+        if (route != null && route.isCurrent) {
           showChatToast(
             context,
-            message: 'Bạn đã rời khỏi phòng chat',
+            message: 'Phòng chat đã bị giải tán',
             isError: true,
             config: ref.read(chatUiConfigProvider),
           );
-          Navigator.of(context).pop();
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            }
+          });
         }
       }
     });
 
     ref.listen<List<Message>>(threadMessagesProvider, (previous, next) {
+      if (next.isEmpty) return;
+
+      final isCurrentlyRemoved = (previous == null || previous.isEmpty)
+          ? _isCurrentUserCurrentlyRemoved(
+              next, widget.currentUserId, notifier.myAcsUserId)
+          : (next.length > previous.length &&
+              _isCurrentUserCurrentlyRemoved(
+                next.sublist(previous.length),
+                widget.currentUserId,
+                notifier.myAcsUserId,
+              ));
+
+      if (isCurrentlyRemoved && mounted) {
+        final chatConfig = ref.read(chatUiConfigProvider);
+        final isDisbanded =
+            next.any((m) => m.type == MessageType.roomDisbanded);
+        showChatToast(
+          context,
+          message: isDisbanded
+              ? 'Phòng chat đã bị giải tán'
+              : 'Bạn đã bị xóa khỏi phòng',
+          isError: true,
+          config: chatConfig,
+        );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
+        });
+        return;
+      }
+
       if (previous == null || previous.isEmpty) return;
       if (next.length > previous.length) {
         final lastMsg = next.last;
+        final isBrandNewMessageAtBottom =
+            !previous.any((m) => m.id == lastMsg.id);
+        if (!isBrandNewMessageAtBottom) {
+          // Chỉ là tải lịch sử tin nhắn cũ hơn — không phải tin mới ở đáy.
+          return;
+        }
+
+        final newCount = next.length - previous.length;
         String normalize(String id) {
           if (id.startsWith('8:acs:')) {
             return id.substring(6);
@@ -658,12 +1315,9 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
         final isMsgMe = myId != null &&
             myId.isNotEmpty &&
             normalize(lastMsg.senderId) == normalize(myId);
-        final isSending = lastMsg.status == MessageDeliveryStatus.sending;
-        // Tin của mình → luôn cuộn xuống đáy. Tin của người khác → chỉ cuộn
-        // khi đang ở gần đáy, không cướp vị trí đọc khi đang xem tin cũ.
-        final atBottom = _isAtBottom;
 
-        if ((isMsgMe || isSending) || atBottom) {
+        if (isMsgMe) {
+          // Tin nhắn do chính mình gửi → tự động cuộn xuống dưới cùng
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (_itemScrollController.isAttached) {
               _itemScrollController.scrollTo(
@@ -673,6 +1327,15 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
               );
             }
           });
+        } else {
+          // Tin nhắn từ người khác đến: KHÔNG tự động cuộn nếu đang ở trên!
+          // Hiện nút mũi tên xuống kèm số lượng tin nhắn mới chưa đọc.
+          if (!_isAtBottom) {
+            setState(() {
+              _showScrollToBottomButton = true;
+              _unreadNewMessagesCount += newCount;
+            });
+          }
         }
       }
     });
@@ -691,27 +1354,28 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
 
     final conversations = ref.watch(conversationListProvider);
     final conversation = conversations.where((c) => c.id == roomId).firstOrNull;
-    if (conversation != null) {
-      ChatLogger.logRequest(
-        'PARTICIPANTS PAYLOAD (${conversation.participants.length} members)',
-        roomId,
-        body: conversation.participants
-            .map((p) => {
-                  'id': p.id,
-                  'acsUserId': p.acsUserId,
-                  'displayName': p.displayName,
-                  'avatarUrl': p.avatarUrl,
-                })
-            .toList(),
-      );
-    }
     final isGroupConversation = conversation?.type == ConversationType.group ||
         (conversation?.participants.length ?? 0) > 2;
-    final visibleMessages = isGroupConversation
-        ? messages
-        : messages
-            .where((message) => message.type != MessageType.system)
-            .toList();
+    final visibleMessages = messages.where((message) {
+      if (message.type == MessageType.memberJoinedUpdate ||
+          message.type == MessageType.memberLeftUpdate ||
+          message.type == MessageType.memberRemovedUpdate ||
+          message.type == MessageType.roomUpdatedUpdate ||
+          message.type == MessageType.roomPinnedUpdate ||
+          message.type == MessageType.roomUnpinnedUpdate ||
+          message.type == MessageType.reactionUpdate ||
+          message.type == MessageType.messagePinUpdate) {
+        return false;
+      }
+      if (message.content.trim().isEmpty &&
+          (message.metadata == null || message.metadata!.isEmpty)) {
+        return false;
+      }
+      if (!isGroupConversation && message.type == MessageType.system) {
+        return false;
+      }
+      return true;
+    }).toList();
 
     final String displayTitle;
     final String? displayAvatar;
@@ -768,96 +1432,215 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
 
     return Scaffold(
       backgroundColor: chatConfig.roomBackgroundColor,
-      appBar: AppBar(
-        // Không cho Material 3 tint appbar khi content scroll qua bên dưới.
-        scrolledUnderElevation: 0,
-        surfaceTintColor: Colors.transparent,
-        backgroundColor: chatConfig.appBarBackgroundColor,
-        titleSpacing: 0,
-        title: Row(
-          children: [
-            CircleAvatar(
-              radius: 18,
-              backgroundImage:
-                  displayAvatar != null ? NetworkImage(displayAvatar) : null,
-              child: displayAvatar == null
-                  ? Text(
-                      displayTitle.isNotEmpty
-                          ? displayTitle[0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(fontSize: 14),
-                    )
-                  : null,
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                displayTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+      appBar: _isSearching
+          ? AppBar(
+              scrolledUnderElevation: 0,
+              surfaceTintColor: Colors.transparent,
+              backgroundColor: chatConfig.appBarBackgroundColor,
+              leading: IconButton(
+                icon: Icon(Icons.arrow_back_ios,
+                    color: chatConfig.iconColor ?? theme.iconTheme.color),
+                onPressed: _closeMessageSearch,
               ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.phone,
-                color: chatConfig.iconColor ?? theme.iconTheme.color),
-            onPressed: () {
-              // Action call UI
-            },
-          ),
-          IconButton(
-            icon: Icon(Icons.videocam,
-                color: chatConfig.iconColor ?? theme.iconTheme.color),
-            onPressed: () {
-              // Action callvideo UI
-            },
-          ),
-          IconButton(
-            icon: Icon(Icons.info_outline,
-                color: chatConfig.iconColor ?? theme.iconTheme.color),
-            onPressed: () async {
-              final leftRoom = await Navigator.of(context).push<bool>(
-                MaterialPageRoute(
-                  builder: (_) => RoomSettingsScreen(
-                    roomId: roomId,
-                    currentUserId: widget.currentUserId,
-                    roomType: conversation?.type ?? ConversationType.direct,
-                    onRoomChanged: (updatedRoom) {
-                      ref
-                          .read(conversationListProvider.notifier)
-                          .updateRoomDetails(
-                            updatedRoom.id,
-                            roomName: updatedRoom.roomName,
-                            avatarUrl: updatedRoom.avatarUrl,
-                            participants: updatedRoom.participants,
-                          );
-                    },
-                    onSystemMessage: (content) {
-                      ref
-                          .read(threadMessagesProvider.notifier)
-                          .addSystemMessage(content);
+              titleSpacing: 0,
+              title: TextField(
+                controller: _searchController,
+                focusNode: _searchFocusNode,
+                cursorColor: Colors.black,
+                style: TextStyle(
+                  fontSize: 15,
+                  color: chatConfig.appBarIconColor ?? Colors.black87,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Tìm tin nhắn...',
+                  hintStyle: TextStyle(
+                    fontSize: 15,
+                    color: (chatConfig.appBarIconColor ?? Colors.black87)
+                        .withValues(alpha: 0.5),
+                  ),
+                  border: InputBorder.none,
+                ),
+                textInputAction: TextInputAction.search,
+                onChanged: _onSearchInputChanged,
+                onSubmitted: (query) {
+                  _searchDebounce?.cancel();
+                  _performMessageSearch(query);
+                },
+              ),
+              actions: [
+                if (_searchController.text.isNotEmpty) ...[
+                  IconButton(
+                    icon: Icon(Icons.clear,
+                        size: 20,
+                        color: chatConfig.iconColor ?? theme.iconTheme.color),
+                    onPressed: () {
+                      _searchController.clear();
+                      _performMessageSearch('');
                     },
                   ),
+                  if (_isSearchingDeeper)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: Center(
+                        child: SkeletonBox(width: 36, height: 16, radius: 8),
+                      ),
+                    ),
+                  if (_searchResults.isNotEmpty) ...[
+                    GestureDetector(
+                      onTap: () => _showSearchResultsSheet(context),
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: (chatConfig.iconColor ??
+                                    theme.iconTheme.color ??
+                                    Colors.black87)
+                                .withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${_currentSearchIndex + 1}/${_searchResults.length}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color:
+                                  chatConfig.iconColor ?? theme.iconTheme.color,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      icon: Icon(Icons.keyboard_arrow_up,
+                          color: chatConfig.iconColor ?? theme.iconTheme.color),
+                      tooltip: 'Tin mới hơn',
+                      onPressed: _navigateSearchNext,
+                    ),
+                    IconButton(
+                      padding: EdgeInsets.zero,
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      icon: Icon(Icons.keyboard_arrow_down,
+                          color: chatConfig.iconColor ?? theme.iconTheme.color),
+                      tooltip: 'Tin cũ hơn',
+                      onPressed: _navigateSearchPrevious,
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                ],
+              ],
+            )
+          : AppBar(
+              // Không cho Material 3 tint appbar khi content scroll qua bên dưới.
+              scrolledUnderElevation: 0,
+              surfaceTintColor: Colors.transparent,
+              backgroundColor: chatConfig.appBarBackgroundColor,
+              titleSpacing: 0,
+              title: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: const Color(0xFFF0F2F5),
+                    backgroundImage: displayAvatar != null
+                        ? NetworkImage(displayAvatar)
+                        : null,
+                    child: displayAvatar == null
+                        ? Text(
+                            displayTitle.isNotEmpty
+                                ? displayTitle[0].toUpperCase()
+                                : '?',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: Colors.black87,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      displayTitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                // IconButton(
+                //   icon: Icon(Icons.phone,
+                //       color: chatConfig.iconColor ?? theme.iconTheme.color),
+                //   onPressed: () {
+                //     // Action call UI
+                //   },
+                // ),
+                // IconButton(
+                //   icon: Icon(Icons.videocam,
+                //       color: chatConfig.iconColor ?? theme.iconTheme.color),
+                //   onPressed: () {
+                //     // Action callvideo UI
+                //   },
+                // ),
+                IconButton(
+                  icon: Icon(Icons.info_outline,
+                      color: chatConfig.iconColor ?? theme.iconTheme.color),
+                  onPressed: () async {
+                    final result = await Navigator.of(context).push<Object?>(
+                      MaterialPageRoute(
+                        builder: (_) => RoomSettingsScreen(
+                          roomId: roomId,
+                          currentUserId: widget.currentUserId,
+                          roomType:
+                              conversation?.type ?? ConversationType.direct,
+                          onRoomChanged: (updatedRoom) {
+                            ref
+                                .read(conversationListProvider.notifier)
+                                .updateRoomDetails(
+                                  updatedRoom.id,
+                                  roomName: updatedRoom.roomName,
+                                  avatarUrl: updatedRoom.avatarUrl,
+                                  participants: updatedRoom.participants,
+                                );
+                          },
+                        ),
+                      ),
+                    );
+                    if (result == 'open_search' && context.mounted) {
+                      _openMessageSearch();
+                      return;
+                    }
+                    if (result is Conversation && context.mounted) {
+                      // Room settings trả về conversation mới được tạo
+                      // ("Tạo cuộc trò chuyện") — mở luôn cuộc trò chuyện đó.
+                      await _openConversation(result);
+                      return;
+                    }
+                    if ((result == true || result == 'room_disbanded') &&
+                        context.mounted) {
+                      final route = ModalRoute.of(context);
+                      if (route != null &&
+                          route.isCurrent &&
+                          Navigator.of(context).canPop()) {
+                        Navigator.of(context).pop();
+                      }
+                      return;
+                    }
+                    if (context.mounted) {
+                      await ref
+                          .read(threadMessagesProvider.notifier)
+                          .refreshLatest();
+                    }
+                  },
                 ),
-              );
-              if (leftRoom == true && context.mounted) {
-                final route = ModalRoute.of(context);
-                if (route != null && route.isCurrent && Navigator.of(context).canPop()) {
-                  Navigator.of(context).pop();
-                }
-                return;
-              }
-              if (context.mounted) {
-                await ref.read(threadMessagesProvider.notifier).refreshLatest();
-              }
-            },
-          ),
-        ],
-      ),
+              ],
+            ),
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
@@ -868,6 +1651,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
               GestureDetector(
                 onTap: () async {
                   final id = pinnedMessage.messageId;
+                  _highlightMessage(id);
                   final index = messages.indexWhere((m) => m.id == id);
                   if (index != -1) {
                     _scrollToMessage(messages.length - 1 - index);
@@ -906,7 +1690,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                   }
                 },
                 child: Container(
-                  margin: const EdgeInsets.all(6.0),
+                  margin: const EdgeInsets.all(10.0),
                   decoration: BoxDecoration(
                     color: chatConfig.pinnedMessageBackgroundColor ??
                         Colors.orange.shade50,
@@ -969,165 +1753,270 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                 ),
               ),
             Expanded(
-              child: isLoading
-                  ? const MessageListSkeleton()
-                  : visibleMessages.isEmpty
-                      ? const Center(
-                          child: Text(
-                              'Chưa có tin nhắn — hãy bắt đầu trò chuyện!'))
-                      : NotificationListener<ScrollNotification>(
-                          onNotification: (notification) {
-                            if (notification.metrics.extentAfter < 200) {
-                              notifier.loadOlder();
-                            }
-                            return false;
-                          },
-                          child: ScrollablePositionedList.builder(
-                            itemScrollController: _itemScrollController,
-                            itemPositionsListener: _itemPositionsListener,
-                            reverse: true,
-                            itemCount: visibleMessages.length +
-                                (notifier.isLoadingOlder ? 1 : 0),
-                            itemBuilder: (context, index) {
-                              if (index == visibleMessages.length) {
-                                return const Padding(
-                                  padding: EdgeInsets.all(8),
-                                  child: Center(
-                                    child: SizedBox(
-                                      width: 20,
-                                      height: 20,
-                                      child: CircularProgressIndicator(
-                                          strokeWidth: 2),
+              child: Stack(
+                children: [
+                  (isLoading || (_isSearchingDeeper && _searchResults.isEmpty))
+                      ? const MessageListSkeleton()
+                      : visibleMessages.isEmpty
+                          ? const Center(
+                              child: Text(
+                                  'Chưa có tin nhắn — hãy bắt đầu trò chuyện!'))
+                          : ScrollablePositionedList.builder(
+                              itemScrollController: _itemScrollController,
+                              itemPositionsListener: _itemPositionsListener,
+                              reverse: true,
+                              itemCount: visibleMessages.length +
+                                  (notifier.isLoadingOlder ? 1 : 0),
+                              itemBuilder: (context, index) {
+                                if (index == visibleMessages.length) {
+                                  return const Padding(
+                                    padding: EdgeInsets.symmetric(vertical: 12),
+                                    child: Center(
+                                      child: SkeletonBox(
+                                          width: 120, height: 14, radius: 7),
                                     ),
+                                  );
+                                }
+
+                                final message = visibleMessages[
+                                    visibleMessages.length - 1 - index];
+                                if (message.isDeleted) {
+                                  return const SizedBox.shrink();
+                                }
+
+                                String getSenderKey(Message m) {
+                                  final normSender =
+                                      _normalizeAcsId(m.senderId);
+                                  if (conversation != null) {
+                                    final member =
+                                        conversation.participants.where((p) {
+                                      if (p.id == m.senderId) return true;
+                                      if (p.acsUserId != null &&
+                                          _normalizeAcsId(p.acsUserId!) ==
+                                              normSender) {
+                                        return true;
+                                      }
+                                      if (m.senderDisplayName
+                                              .trim()
+                                              .isNotEmpty &&
+                                          p.displayName.trim().isNotEmpty &&
+                                          m.senderDisplayName.trim() ==
+                                              p.displayName.trim()) {
+                                        return true;
+                                      }
+                                      return false;
+                                    }).firstOrNull;
+                                    if (member != null) return member.id;
+                                  }
+                                  return m.senderId;
+                                }
+
+                                ChatUser? senderMember;
+                                if (conversation != null) {
+                                  senderMember =
+                                      conversation.participants.where((p) {
+                                    return _isSameUser(
+                                            message.senderId, p.id) ||
+                                        _isSameUser(message.senderId,
+                                            p.acsUserId ?? '');
+                                  }).firstOrNull;
+                                }
+
+                                final bool isMe = (senderMember != null)
+                                    ? (_isSameUser(senderMember.id, widget.currentUserId) ||
+                                        _isSameUser(senderMember.acsUserId ?? '', myId ?? '') ||
+                                        _isSameUser(senderMember.id, myId ?? ''))
+                                    : (_isSameUser(message.senderId, widget.currentUserId) ||
+                                        _isSameUser(message.senderId, myId ?? ''));
+
+                                String? senderAvatar;
+                                if (!isMe) {
+                                  if (senderMember != null && isNetworkAvatar(senderMember.avatarUrl)) {
+                                    senderAvatar = senderMember.avatarUrl;
+                                  } else {
+                                    final cached = notifier.getAvatarUrlForUser(message.senderId);
+                                    if (cached != null && isNetworkAvatar(cached)) {
+                                      senderAvatar = cached;
+                                    } else {
+                                      final metaAvatar = message.metadata?['senderAvatarUrl'] ??
+                                          message.metadata?['avatarUrl'] ??
+                                          message.metadata?['senderAvatar'] ??
+                                          message.metadata?['userAvatarUrl'];
+                                      if (isNetworkAvatar(metaAvatar?.toString())) {
+                                        senderAvatar = metaAvatar.toString();
+                                      } else {
+                                        senderAvatar = isGroupConversation
+                                            ? null
+                                            : widget.senderAvatarUrl;
+                                      }
+                                    }
+                                  }
+                                }
+
+                                if (index == 0 && message.id.isNotEmpty) {
+                                  final dbg = StringBuffer()
+                                    ..write('room=$roomId')
+                                    ..write(' senderId=${message.senderId}')
+                                    ..write(' normSender=${message.senderId}')
+                                    ..write(' myId=$myId')
+                                    ..write(
+                                        ' currentUserId=${widget.currentUserId}')
+                                    ..write(
+                                        ' senderMemberId=${senderMember?.id}')
+                                    ..write(
+                                        ' senderMemberCui=${senderMember?.acsUserId}')
+                                    ..write(
+                                        ' participants=${conversation?.participants.map((p) => '${p.id}|${p.acsUserId}').join(',')}')
+                                    ..write(' isMe=$isMe')
+                                    ..write(
+                                        ' convFound=${conversation != null}');
+                                  developer.log('thread-screen-isMe $dbg',
+                                      name: 'ChatModule');
+                                }
+                                final currentSenderKey = getSenderKey(message);
+                                final bool isFollowUpOfSameSender =
+                                    index + 1 < visibleMessages.length &&
+                                        currentSenderKey.isNotEmpty &&
+                                        currentSenderKey ==
+                                            getSenderKey(visibleMessages[
+                                                visibleMessages.length -
+                                                    1 -
+                                                    (index + 1)]);
+
+                                return MessageBubble(
+                                  key: ValueKey(message.id),
+                                  message: message,
+                                  isMe: isMe,
+                                  senderAvatarUrl: senderAvatar,
+                                  showSenderAvatar: !isFollowUpOfSameSender,
+                                  isHighlighted:
+                                      message.id == _highlightedMessageId,
+                                  reactionSummary:
+                                      notifier.reactionSummaryFor(message.id),
+                                  onReactionTap: () =>
+                                      _showReactionDetails(message),
+                                  onLongPress: () => _showMessageActionsSheet(
+                                    context,
+                                    message,
+                                    canEdit: isMe,
                                   ),
                                 );
-                              }
-                              final message = visibleMessages[
-                                  visibleMessages.length - 1 - index];
-                              String normalizeAcsId(String id) {
-                                if (id.startsWith('8:acs:')) {
-                                  return id.substring(6);
-                                }
-                                return id;
-                              }
-
-                              String getSenderKey(Message m) {
-                                final norm = normalizeAcsId(m.senderId);
-                                if (conversation != null) {
-                                  final member = conversation.participants.where((p) {
-                                    if (p.id == m.senderId || p.id == norm) return true;
-                                    if (p.acsUserId != null &&
-                                        normalizeAcsId(p.acsUserId!) == norm) {
-                                      return true;
-                                    }
-                                    return false;
-                                  }).firstOrNull;
-                                  if (member != null) return member.id;
-                                }
-                                return norm;
-                              }
-
-                              final normSender = normalizeAcsId(message.senderId);
-
-                              ChatUser? senderMember;
-                              if (conversation != null) {
-                                senderMember = conversation.participants.where((p) {
-                                  if (p.id == message.senderId || p.id == normSender) {
-                                    return true;
-                                  }
-                                  if (p.acsUserId != null &&
-                                      normalizeAcsId(p.acsUserId!) == normSender) {
-                                    return true;
-                                  }
-                                  return false;
-                                }).firstOrNull;
-                              }
-
-                              final bool isMe;
-                              String? senderAvatar;
-
-                              if (senderMember != null) {
-                                isMe = senderMember.id == widget.currentUserId ||
-                                    (senderMember.acsUserId != null &&
-                                        myId != null &&
-                                        myId.isNotEmpty &&
-                                        normalizeAcsId(senderMember.acsUserId!) ==
-                                            normalizeAcsId(myId));
-                                if (!isMe) {
-                                  senderAvatar =
-                                      isNetworkAvatar(senderMember.avatarUrl)
-                                          ? senderMember.avatarUrl
-                                          : widget.senderAvatarUrl;
-                                }
-                              } else {
-                                isMe = message.senderId == widget.currentUserId ||
-                                    normSender == widget.currentUserId ||
-                                    (myId != null && myId.isNotEmpty
-                                        ? normSender == normalizeAcsId(myId)
-                                        : false);
-                                senderAvatar =
-                                    isMe ? null : widget.senderAvatarUrl;
-                              }
-
-                              if (index == 0 && message.id.isNotEmpty) {
-                                final dbg = StringBuffer()
-                                  ..write('room=$roomId')
-                                  ..write(' senderId=${message.senderId}')
-                                  ..write(' normSender=$normSender')
-                                  ..write(' myId=$myId')
-                                  ..write(
-                                      ' currentUserId=${widget.currentUserId}')
-                                  ..write(' senderMemberId=${senderMember?.id}')
-                                  ..write(
-                                      ' senderMemberCui=${senderMember?.acsUserId}')
-                                  ..write(
-                                      ' participants=${conversation?.participants.map((p) => '${p.id}|${p.acsUserId}').join(',')}')
-                                  ..write(' isMe=$isMe')
-                                  ..write(' convFound=${conversation != null}');
-                                developer.log('thread-screen-isMe $dbg',
-                                    name: 'ChatModule');
-                              }
-
-                              // ListView reverse: index càng nhỏ tin càng mới.
-                              // Tin liền trước về thời gian là messages[index+1].
-                              // Chuỗi tin liên tiếp cùng 1 người → chỉ tin
-                              // đầu tiên (cũ nhất) hiện avatar, các tin sau ẩn.
-                              final currentSenderKey = getSenderKey(message);
-                              final bool isFollowUpOfSameSender =
-                                  index + 1 < visibleMessages.length &&
-                                      currentSenderKey.isNotEmpty &&
-                                      currentSenderKey ==
-                                          getSenderKey(visibleMessages[
-                                              visibleMessages.length -
-                                                  1 -
-                                                  (index + 1)]);
-
-                              return MessageBubble(
-                                key: ValueKey(message.id),
-                                message: message,
-                                isMe: isMe,
-                                senderAvatarUrl: senderAvatar,
-                                showSenderAvatar: !isFollowUpOfSameSender,
-                                reactionSummary:
-                                    notifier.reactionSummaryFor(message.id),
-                                onReactionTap: () =>
-                                    _showReactionDetails(message),
-                                onLongPress: () => _showMessageActionsSheet(
-                                  context,
-                                  message,
-                                  canEdit: isMe,
-                                ),
+                              },
+                            ),
+                  if (_showScrollToBottomButton)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 12,
+                      child: Center(
+                        child: GestureDetector(
+                          onTap: () {
+                            if (_itemScrollController.isAttached) {
+                              _itemScrollController.scrollTo(
+                                index: 0,
+                                duration: const Duration(milliseconds: 300),
+                                curve: Curves.easeOut,
                               );
-                            },
+                            }
+                            setState(() {
+                              _showScrollToBottomButton = false;
+                              _unreadNewMessagesCount = 0;
+                            });
+                          },
+                          child: Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: chatConfig.surfaceColor ?? Colors.white,
+                              shape: BoxShape.circle,
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x29000000),
+                                  blurRadius: 6,
+                                  offset: Offset(0, 2),
+                                ),
+                              ],
+                              border: Border.all(
+                                color: const Color(0xFFEAECF0),
+                                width: 1,
+                              ),
+                            ),
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  color: chatConfig.primaryActionColor ??
+                                      const Color(0xFF0787E8),
+                                  size: 28,
+                                ),
+                                if (_unreadNewMessagesCount > 0)
+                                  Positioned(
+                                    top: 2,
+                                    right: 2,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(4),
+                                      decoration: const BoxDecoration(
+                                        color: Colors.red,
+                                        shape: BoxShape.circle,
+                                      ),
+                                      constraints: const BoxConstraints(
+                                        minWidth: 16,
+                                        minHeight: 16,
+                                      ),
+                                      child: Text(
+                                        _unreadNewMessagesCount > 99
+                                            ? '99+'
+                                            : '$_unreadNewMessagesCount',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
                           ),
                         ),
+                      ),
+                    ),
+                ],
+              ),
             ),
-            _UploadProgressBanner(roomId: roomId),
-            MessageInput(
-              onSend: notifier.sendMessage,
-              onSendImages: notifier.sendImages,
-              onSendFiles: notifier.sendFiles,
-            ),
+            UploadProgressBanner(roomId: roomId),
+            UploadErrorListener(roomId: roomId),
+            if (_isCurrentUserCurrentlyRemoved(
+              messages,
+              widget.currentUserId,
+              notifier.myAcsUserId,
+            ))
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                color: chatConfig.surfaceColor ?? Colors.grey.shade100,
+                alignment: Alignment.center,
+                child: Text(
+                  messages.any((m) => m.type == MessageType.roomDisbanded)
+                      ? 'Phòng chat này đã bị giải tán'
+                      : 'Bạn không còn ở trong phòng chat này',
+                  style: TextStyle(
+                    color:
+                        chatConfig.secondaryTextColor ?? Colors.grey.shade600,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              )
+            else
+              MessageInput(
+                onSend: notifier.sendMessage,
+                onSendImages: notifier.sendImages,
+                onSendFiles: notifier.sendFiles,
+                onSendVideos: notifier.sendVideos,
+              ),
           ],
         ),
       ),
@@ -1215,7 +2104,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
               ...pinnedMessages.map(
                 (pinned) => Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: _PinnedMessageRow(
+                  child: PinnedMessageRow(
                     pinnedMessage: pinned,
                     config: config,
                     actionIcon: Icons.swap_horiz_rounded,
@@ -1302,7 +2191,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, index) {
                       final p = pinnedMessages[index];
-                      return _PinnedMessageRow(
+                      return PinnedMessageRow(
                         pinnedMessage: p,
                         config: config,
                         actionIcon: Icons.close_rounded,
@@ -1326,6 +2215,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
                           });
 
                           final id = p.messageId;
+                          _highlightMessage(id);
                           final msgIndex =
                               messages.indexWhere((m) => m.id == id);
                           if (msgIndex != -1) {
@@ -1371,330 +2261,3 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent> {
   }
 }
 
-class _PinnedMessageRow extends StatelessWidget {
-  const _PinnedMessageRow({
-    required this.pinnedMessage,
-    required this.config,
-    required this.actionIcon,
-    required this.actionTooltip,
-    required this.onTap,
-    required this.onAction,
-    this.actionColor,
-  });
-
-  final PinnedMessage pinnedMessage;
-  final ChatUiConfig config;
-  final IconData actionIcon;
-  final String actionTooltip;
-  final VoidCallback onTap;
-  final VoidCallback onAction;
-  final Color? actionColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final secondaryColor = config.secondaryTextColor ?? Colors.grey.shade600;
-
-    return Material(
-      color: const Color(0xFFF7F8FA),
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      pinnedMessage.content,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        height: 1.25,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      pinnedMessage.creator.isEmpty
-                          ? 'Tin nhắn đã ghim'
-                          : 'Ghim bởi ${pinnedMessage.creator}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: secondaryColor),
-                    ),
-                  ],
-                ),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                tooltip: actionTooltip,
-                onPressed: onAction,
-                icon: Icon(actionIcon, size: 18),
-                color: actionColor ?? secondaryColor,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ReactionPickerItem extends StatelessWidget {
-  const _ReactionPickerItem({
-    required this.reaction,
-    required this.isSelected,
-    required this.isHovered,
-    required this.primaryColor,
-    required this.onHover,
-    required this.onTap,
-  });
-
-  final ReactionConfig reaction;
-  final bool isSelected;
-  final bool isHovered;
-  final Color primaryColor;
-  final ValueChanged<bool> onHover;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      onEnter: (_) => onHover(true),
-      onExit: (_) => onHover(false),
-      child: Tooltip(
-        message: reaction.displayName,
-        child: InkWell(
-          onTap: onTap,
-          customBorder: const CircleBorder(),
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Center(
-              child: AnimatedScale(
-                scale: isHovered ? 1.45 : 1,
-                duration: const Duration(milliseconds: 140),
-                curve: Curves.easeOutBack,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 140),
-                  width: 36,
-                  height: 36,
-                  padding: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    color: isSelected
-                        ? primaryColor.withValues(alpha: 0.15)
-                        : Colors.transparent,
-                    shape: BoxShape.circle,
-                    border: isSelected
-                        ? Border.all(color: primaryColor, width: 1.5)
-                        : null,
-                  ),
-                  child: reaction.iconUrl.isEmpty
-                      ? const Icon(Icons.emoji_emotions_outlined, size: 24)
-                      : Image.network(
-                          reaction.iconUrl,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => const Icon(
-                            Icons.emoji_emotions_outlined,
-                            size: 24,
-                          ),
-                        ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _MessageActionButton extends StatelessWidget {
-  const _MessageActionButton({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.iconColor,
-    this.isDisabled = false,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final Color? iconColor;
-  final bool isDisabled;
-
-  @override
-  Widget build(BuildContext context) {
-    final color =
-        isDisabled ? Colors.grey.shade400 : (iconColor ?? Colors.black87);
-
-    final bg = (iconColor ?? Colors.grey.shade600)
-        .withValues(alpha: isDisabled ? 0.04 : 0.1);
-
-    return InkWell(
-      onTap: isDisabled ? null : onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: bg,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: color, size: 24),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: isDisabled ? Colors.grey.shade400 : Colors.black87,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _UploadProgressBanner extends ConsumerWidget {
-  const _UploadProgressBanner({required this.roomId});
-
-  final String roomId;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final items = ref.watch(mediaUploadProgressProvider)[roomId];
-    if (items == null || items.isEmpty) return const SizedBox.shrink();
-
-    final totalCount = items.length;
-    final completedCount = items.where((i) => i.progress >= 1.0).length;
-    final overallProgress =
-        items.fold<double>(0.0, (sum, i) => sum + i.progress) / totalCount;
-    final overallPercent = (overallProgress * 100).toInt().clamp(0, 100);
-    final primary = Theme.of(context).colorScheme.primary;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-        border: Border(
-          top: BorderSide(color: Colors.grey.shade300, width: 0.5),
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Đang tải lên $completedCount/$totalCount ảnh',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
-              ),
-              Text(
-                '$overallPercent%',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold,
-                  color: primary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          SizedBox(
-            height: 64,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
-              itemBuilder: (context, index) {
-                final item = items[index];
-                final percent = (item.progress * 100).toInt().clamp(0, 100);
-                final isDone = item.progress >= 1.0;
-                final file = File(item.path);
-
-                return SizedBox(
-                  width: 64,
-                  height: 64,
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: file.existsSync()
-                              ? Image.file(file, fit: BoxFit.cover)
-                              : Container(
-                                  color: Colors.grey.shade300,
-                                  child: const Icon(Icons.image, color: Colors.grey),
-                                ),
-                        ),
-                        Positioned.fill(
-                          child: Container(
-                            color: isDone ? Colors.black26 : Colors.black54,
-                          ),
-                        ),
-                        Center(
-                          child: isDone
-                              ? const Icon(
-                                  Icons.check_circle,
-                                  color: Colors.greenAccent,
-                                  size: 28,
-                                )
-                              : Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: CircularProgressIndicator(
-                                        value: item.progress,
-                                        strokeWidth: 2.5,
-                                        valueColor:
-                                            AlwaysStoppedAnimation<Color>(primary),
-                                        backgroundColor: Colors.white38,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '$percent%',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

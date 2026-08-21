@@ -46,7 +46,9 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
   bool _serverConnected = false;
   bool _sessionExpired = false;
   int _reconnectAttempt = 0;
-  String? _activeRoomId;
+  final Set<String> _activeRoomIds = {};
+  DateTime _lastReceivedTime = DateTime.now();
+  String? _lastVisibleMessageId;
 
   static const _authCloseCodes = {1008, 4003, 4401, 4403};
   static String _createProcessDeviceId() {
@@ -98,6 +100,7 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
       }
       _channel = channel;
       _reconnectAttempt = 0;
+      _lastReceivedTime = DateTime.now();
       _socketSubscription = channel.stream.listen(
         _handleSocketData,
         onError: (Object error, StackTrace stackTrace) {
@@ -133,6 +136,7 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
 
   void _handleSocketData(dynamic raw) {
     try {
+      _lastReceivedTime = DateTime.now();
       final decoded = jsonDecode(raw.toString());
       if (decoded is! Map) return;
       final event = decoded.cast<String, dynamic>();
@@ -144,12 +148,14 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
         _serverConnected = true;
         final interval = _intValue(event['heartbeatIntervalSeconds']) ?? 30;
         _startHeartbeat(Duration(seconds: max(5, interval)));
-        final roomId = _activeRoomId;
-        if (roomId != null) _send({'type': 'enter_room', 'roomId': roomId});
+        for (final roomId in _activeRoomIds) {
+          _send({'type': 'enter_room', 'roomId': roomId});
+        }
         return;
       }
       if (type == 'error') {
-        final code = event['errorCode']?.toString() ?? event['code']?.toString();
+        final code =
+            event['errorCode']?.toString() ?? event['code']?.toString();
         final message = event['message']?.toString() ?? '';
         if (_looksLikeAuthError('$code $message')) _expireSession();
         return;
@@ -167,21 +173,60 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
     if (payload is! Map) return;
     final data = payload.cast<String, dynamic>();
     final roomId = event['roomId']?.toString() ?? data['roomId']?.toString();
-    // Event backend hiện chỉ trả roomId, không trả ACS threadId. Khi room
-    // chưa từng được mở trong session thì dùng roomId làm routing key để màn
-    // danh sách vẫn xác định và cập nhật đúng conversation.
     final threadId = data['threadId']?.toString() ??
         (roomId == null ? null : _threadIdsByRoom[roomId] ?? roomId);
 
+    if (threadId == null && roomId == null) return;
+    final targetId = threadId ?? roomId!;
+
+    if (eventType == 'MessageDeleted') {
+      final msgId = (data['messageId'] ?? data['MessageId'] ?? '').toString();
+      if (msgId.isEmpty) return;
+      final deletedAtRaw = data['deletedAtUtc']?.toString();
+      final deletedAt = deletedAtRaw != null
+          ? DateTime.tryParse(deletedAtRaw)
+          : DateTime.now();
+      final signal = MessageModel(
+        id: msgId,
+        threadId: targetId,
+        senderId: (data['deletedBy'] ?? '').toString(),
+        senderDisplayName: '',
+        content: '(tin nhắn đã bị xoá)',
+        type: MessageType.text,
+        createdAt: deletedAt ?? DateTime.now(),
+        deletedOn: deletedAt,
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
+    if (eventType == 'MessagePinned' || eventType == 'MessageUnpinned') {
+      final msgId = (data['messageId'] ?? data['MessageId'] ?? '').toString();
+      if (msgId.isEmpty) return;
+      final isPinned = eventType == 'MessagePinned';
+      final signal = MessageModel(
+        id: msgId,
+        threadId: targetId,
+        senderId: (data['actorId'] ?? '').toString(),
+        senderDisplayName: (data['actorName'] ?? '').toString(),
+        content: isPinned ? 'pin' : 'unpin',
+        type: MessageType.messagePinUpdate,
+        createdAt: DateTime.now(),
+        pin: isPinned,
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
     if (eventType == 'MessageReacted' ||
         eventType == 'MessageUnreacted' ||
+        eventType == 'MessageReactionRemoved' ||
         eventType == 'MessageReactionUpdated' ||
         (eventType != null && eventType.toLowerCase().contains('react'))) {
       final msgId = (data['messageId'] ?? data['MessageId'] ?? '').toString();
-      if (threadId == null) return;
       final signal = MessageModel(
         id: msgId,
-        threadId: threadId,
+        threadId: targetId,
         senderId: (data['actorId'] ?? '').toString(),
         senderDisplayName: (data['actorName'] ?? '').toString(),
         content: data['reactionCode']?.toString() ?? '',
@@ -199,19 +244,277 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
       final messageId = rawMessage['MessageId'] ??
           rawMessage['messageId'] ??
           rawMessage['id'];
-      if (threadId == null || messageId == null) return;
+      if (messageId == null) return;
       final usesRealtimeSchema = rawMessage.containsKey('MessageId') ||
           rawMessage.containsKey('CreatedDate') ||
           rawMessage.containsKey('SenderId');
       final message = usesRealtimeSchema
-          ? MessageModel.fromWebSocketJson(rawMessage, threadId: threadId)
-          : MessageModel.fromAcsJson(rawMessage, threadId: threadId);
+          ? MessageModel.fromWebSocketJson(rawMessage, threadId: targetId)
+          : MessageModel.fromAcsJson(rawMessage, threadId: targetId);
       _emit(message, roomId: roomId);
       return;
     }
 
-    // Payload các event còn lại chưa được backend công bố. Raw JSON đã được
-    // log ở trên để bổ sung reducer mà không làm client crash.
+    if (eventType == 'RoomCreated') {
+      final roomName = (data['roomName'] ?? '').toString();
+      final createdByName = (data['createdByName'] ?? '').toString();
+      final content = createdByName.isNotEmpty
+          ? '**$createdByName** đã tạo phòng **$roomName**'
+          : 'Phòng mới đã được tạo';
+      final signal = MessageModel(
+        id: 'room_created_${DateTime.now().millisecondsSinceEpoch}',
+        threadId: targetId,
+        senderId: (data['createdByUserId'] ?? '').toString(),
+        senderDisplayName: createdByName,
+        content: content,
+        type: MessageType.system,
+        createdAt: DateTime.now(),
+        metadata: {'eventType': 'RoomCreated', ...data},
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
+    if (eventType == 'RoomUpdated') {
+      final roomName = (data['roomName'] ?? '').toString().trim();
+      final avatarUrl = (data['avatarUrl'] ?? '').toString().trim();
+      final actorName = (data['actorName'] ??
+              data['updatedByName'] ??
+              data['changedByName'] ??
+              '')
+          .toString()
+          .trim();
+      final signal = MessageModel(
+        id: 'room_updated_${DateTime.now().millisecondsSinceEpoch}',
+        threadId: targetId,
+        senderId: '',
+        senderDisplayName: actorName,
+        content: roomName,
+        type: MessageType.roomUpdatedUpdate,
+        createdAt: DateTime.now(),
+        metadata: {
+          'eventType': 'RoomUpdated',
+          'roomName': roomName,
+          'avatarUrl': avatarUrl,
+          'actorName': actorName,
+          ...data,
+        },
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
+    if (eventType == 'RoomDisbanded') {
+      final signal = MessageModel(
+        id: 'room_disbanded_${DateTime.now().millisecondsSinceEpoch}',
+        threadId: targetId,
+        senderId: (data['disbandedBy'] ?? '').toString(),
+        senderDisplayName: '',
+        content: 'Phòng chat đã bị giải tán',
+        type: MessageType.roomDisbanded,
+        createdAt: DateTime.now(),
+        metadata: {'eventType': 'RoomDisbanded', ...data},
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
+    if (eventType == 'RoomRoleChanged') {
+      final payload = (data['payload'] is Map)
+          ? (data['payload'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      final actorName = (data['actorName'] ??
+              data['changedByName'] ??
+              data['actorDisplayName'] ??
+              data['fromUserName'] ??
+              payload['actorName'] ??
+              payload['changedByName'] ??
+              payload['actorDisplayName'] ??
+              '')
+          .toString()
+          .trim();
+      final targetName = (payload['userName'] ??
+              payload['targetName'] ??
+              payload['userDisplayName'] ??
+              payload['memberName'] ??
+              payload['memberUserName'] ??
+              payload['toUserName'] ??
+              data['targetName'] ??
+              data['memberName'] ??
+              data['userName'] ??
+              data['memberUserName'] ??
+              data['userDisplayName'] ??
+              data['toUserName'] ??
+              '')
+          .toString()
+          .trim();
+      final isAdmin = payload['isAdmin'] == true ||
+          data['isAdmin'] == true ||
+          payload['role']?.toString().toLowerCase() == 'admin' ||
+          data['role']?.toString().toLowerCase() == 'admin' ||
+          payload['newRole']?.toString().toLowerCase() == 'admin' ||
+          data['newRole']?.toString().toLowerCase() == 'admin';
+
+      final String content;
+      if (actorName.isNotEmpty && targetName.isNotEmpty) {
+        content = isAdmin
+            ? '**$actorName** đã phong **$targetName** làm Admin'
+            : '**$actorName** đã gỡ quyền Admin của **$targetName**';
+      } else if (targetName.isNotEmpty) {
+        content = isAdmin
+            ? '**$targetName** đã được phong làm Admin'
+            : '**$targetName** đã bị gỡ quyền Admin';
+      } else if (actorName.isNotEmpty) {
+        content = isAdmin
+            ? '**$actorName** đã thêm Admin mới'
+            : '**$actorName** đã gỡ quyền Admin';
+      } else {
+        content = 'Quyền Admin trong phòng đã thay đổi';
+      }
+
+      final signal = MessageModel(
+        id: 'room_role_${DateTime.now().millisecondsSinceEpoch}',
+        threadId: targetId,
+        senderId: actorName,
+        senderDisplayName: '',
+        content: content,
+        type: MessageType.system,
+        createdAt: DateTime.now(),
+        metadata: {'eventType': 'RoomRoleChanged', ...data},
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
+    if (eventType == 'RoomOwnershipTransferred') {
+      final payload = (data['payload'] is Map)
+          ? (data['payload'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      final actorName = (data['actorName'] ??
+              data['transferredByName'] ??
+              data['fromUserName'] ??
+              payload['actorName'] ??
+              payload['transferredByName'] ??
+              payload['fromUserName'] ??
+              '')
+          .toString()
+          .trim();
+      final targetName = (payload['toUserName'] ??
+              payload['targetName'] ??
+              payload['newOwnerName'] ??
+              data['targetName'] ??
+              data['toUserName'] ??
+              data['newOwnerName'] ??
+              '')
+          .toString()
+          .trim();
+
+      final String content;
+      if (actorName.isNotEmpty && targetName.isNotEmpty) {
+        content = '**$actorName** đã chuyển quyền Trưởng phòng cho **$targetName**';
+      } else if (targetName.isNotEmpty) {
+        content = '**$targetName** đã trở thành Trưởng phòng mới';
+      } else if (actorName.isNotEmpty) {
+        content = '**$actorName** đã chuyển quyền Trưởng phòng';
+      } else {
+        content = 'Quyền Trưởng phòng đã được chuyển giao';
+      }
+
+      final signal = MessageModel(
+        id: 'room_owner_${DateTime.now().millisecondsSinceEpoch}',
+        threadId: targetId,
+        senderId: '',
+        senderDisplayName: '',
+        content: content,
+        type: MessageType.system,
+        createdAt: DateTime.now(),
+        metadata: {'eventType': 'RoomOwnershipTransferred', ...data},
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
+    if (eventType == 'RoomPinned' || eventType == 'RoomUnpinned') {
+      final isPinned = eventType == 'RoomPinned';
+      final signal = MessageModel(
+        id: 'room_pin_${DateTime.now().millisecondsSinceEpoch}',
+        threadId: targetId,
+        senderId: '',
+        senderDisplayName: '',
+        content: isPinned ? 'room_pinned' : 'room_unpinned',
+        type: isPinned
+            ? MessageType.roomPinnedUpdate
+            : MessageType.roomUnpinnedUpdate,
+        createdAt: DateTime.now(),
+        metadata: {
+          'eventType': eventType,
+          'isPinned': isPinned,
+          'roomId': targetId
+        },
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
+    if (eventType == 'MemberJoined') {
+      final actorName = (data['actorName'] ?? data['addedByName'] ?? '').toString();
+      final signal = MessageModel(
+        id: 'member_joined_${DateTime.now().millisecondsSinceEpoch}',
+        threadId: targetId,
+        senderId: (data['actorUserId'] ?? data['addedByUserId'] ?? '').toString(),
+        senderDisplayName: actorName,
+        content: '',
+        type: MessageType.memberJoinedUpdate,
+        createdAt: DateTime.now(),
+        metadata: {'eventType': 'MemberJoined', ...data},
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
+    if (eventType == 'MemberLeft') {
+      final actorName = (data['actorName'] ?? data['userName'] ?? '').toString();
+      final signal = MessageModel(
+        id: 'member_left_${DateTime.now().millisecondsSinceEpoch}',
+        threadId: targetId,
+        senderId: (data['userId'] ?? data['actorUserId'] ?? '').toString(),
+        senderDisplayName: actorName,
+        content: '',
+        type: MessageType.memberLeftUpdate,
+        createdAt: DateTime.now(),
+        metadata: {'eventType': 'MemberLeft', ...data},
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
+
+    if (eventType == 'MemberRemoved') {
+      final payload = (data['payload'] is Map) ? (data['payload'] as Map).cast<String, dynamic>() : <String, dynamic>{};
+      final removedUserId = (data['removedUserId'] ?? payload['removedUserId'] ?? '').toString();
+      final removedByUserId = (data['removedByUserId'] ?? data['actorUserId'] ?? payload['removedByUserId'] ?? payload['actorUserId'] ?? '').toString();
+      final actorName = (data['actorName'] ?? payload['actorName'] ?? payload['removedByName'] ?? '').toString();
+      final removedUserName = (data['removedUserName'] ?? payload['removedUserName'] ?? payload['targetName'] ?? '').toString();
+
+      final signal = MessageModel(
+        id: 'member_removed_${DateTime.now().millisecondsSinceEpoch}',
+        threadId: targetId,
+        senderId: removedByUserId,
+        senderDisplayName: actorName,
+        content: '',
+        type: MessageType.memberRemovedUpdate,
+        createdAt: DateTime.now(),
+        metadata: {
+          'eventType': 'MemberRemoved',
+          'removedUserId': removedUserId,
+          'removedByUserId': removedByUserId,
+          'removedUserName': removedUserName,
+          'actorName': actorName,
+          ...data
+        },
+      );
+      _emit(signal, roomId: roomId);
+      return;
+    }
   }
 
   void _emit(MessageModel message, {String? roomId}) {
@@ -228,17 +531,79 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
   void _startHeartbeat(Duration interval) {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(interval, (_) {
-      _send({'type': 'heartbeat'});
+      if (DateTime.now().difference(_lastReceivedTime) > interval * 2) {
+        ChatLogger.log(
+            'WebSocket idle timeout — no packet received for ${interval.inSeconds * 2}s. Reconnecting...');
+        unawaited(_handleDisconnected());
+        return;
+      }
+      final msg = <String, dynamic>{'type': 'heartbeat'};
+      if (_lastVisibleMessageId != null && _lastVisibleMessageId!.isNotEmpty) {
+        msg['lastVisibleMessageId'] = _lastVisibleMessageId;
+      }
+      _send(msg);
     });
+  }
+
+  @override
+  void sendReadMessage(String lastVisibleMessageId) {
+    if (lastVisibleMessageId.isEmpty) return;
+    if (_lastVisibleMessageId == lastVisibleMessageId) {
+      ChatLogger.log('[sendReadMessage] Skipped: already sent for $lastVisibleMessageId');
+      return;
+    }
+    _lastVisibleMessageId = lastVisibleMessageId;
+    if (_serverConnected) {
+      _send({
+        'type': 'read',
+        'lastVisibleMessageId': lastVisibleMessageId,
+      });
+    } else {
+      ChatLogger.log('[sendReadMessage] Skipped: _serverConnected is false');
+    }
+  }
+
+  @override
+  void clearReadMessageState() {
+    _lastVisibleMessageId = null;
+  }
+
+  @override
+  void leaveActiveRoom() {
+    if (_lastVisibleMessageId == null && _activeRoomIds.isEmpty) return;
+    if (_serverConnected) {
+      for (final roomId in _activeRoomIds) {
+        _send({
+          'type': 'leave_room',
+          'roomId': roomId,
+          if (_lastVisibleMessageId != null && _lastVisibleMessageId!.isNotEmpty)
+            'lastVisibleMessageId': _lastVisibleMessageId,
+        });
+      }
+    }
+    _lastVisibleMessageId = null;
+    _activeRoomIds.clear();
+  }
+
+  @override
+  void resetSession() {
+    _sessionExpired = false;
+    _reconnectAttempt = 0;
+    if (!_disposed && _channel == null) {
+      unawaited(_ensureConnected());
+    }
   }
 
   void _send(Map<String, dynamic> message) {
     final channel = _channel;
     if (channel == null) return;
-    channel.sink.add(jsonEncode(message));
+    final encoded = jsonEncode(message);
+    ChatLogger.log('WebSocket send: $encoded');
+    channel.sink.add(encoded);
   }
 
-  Future<void> _handleDisconnected({int? closeCode, String? closeReason}) async {
+  Future<void> _handleDisconnected(
+      {int? closeCode, String? closeReason}) async {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     await _socketSubscription?.cancel();
@@ -256,13 +621,16 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
   }
 
   void _scheduleReconnect() {
-    if (_disposed || _manualClose || _sessionExpired ||
+    if (_disposed ||
+        _manualClose ||
+        _sessionExpired ||
         _reconnectTimer?.isActive == true) return;
     const delays = [1, 2, 4, 8, 15, 30];
     final base = delays[min(_reconnectAttempt, delays.length - 1)];
     _reconnectAttempt++;
     final jitterMs = Random().nextInt(500);
-    _reconnectTimer = Timer(Duration(seconds: base, milliseconds: jitterMs), () {
+    _reconnectTimer =
+        Timer(Duration(seconds: base, milliseconds: jitterMs), () {
       unawaited(_ensureConnected());
     });
   }
@@ -293,16 +661,20 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
   @override
   Stream<MessageModel> watchNewMessages(String roomId, String threadId) {
     _threadIdsByRoom[roomId] = threadId;
-    final existing = _threadControllers[threadId];
-    if (existing != null) return existing.stream;
-    final controller = StreamController<MessageModel>.broadcast();
-    _threadControllers[threadId] = controller;
-    _activeRoomId = roomId;
+    _activeRoomIds.add(roomId);
+    _lastVisibleMessageId = null;
+
     if (_serverConnected) {
       _send({'type': 'enter_room', 'roomId': roomId});
     } else {
       unawaited(_ensureConnected());
     }
+
+    final existing = _threadControllers[threadId];
+    if (existing != null) return existing.stream;
+
+    final controller = StreamController<MessageModel>.broadcast();
+    _threadControllers[threadId] = controller;
     return controller.stream;
   }
 
@@ -324,9 +696,11 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
         .toList();
     for (final roomId in roomIds) {
       _threadIdsByRoom.remove(roomId);
-      if (_activeRoomId == roomId) _activeRoomId = null;
+      _activeRoomIds.remove(roomId);
+      if (_serverConnected) {
+        _send({'type': 'leave_room', 'roomId': roomId});
+      }
     }
-    _send({'type': 'leave_room'});
     await controller?.close();
   }
 

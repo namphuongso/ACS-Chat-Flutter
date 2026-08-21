@@ -9,12 +9,23 @@ import 'package:hive/hive.dart';
 /// `Hive.initFlutter()` (NPP main đã gọi). Nếu box không mở được (Hive chưa
 /// init), mọi thao tác trở thành no-op → module vẫn chạy, chỉ mất cache.
 class HiveMessageLocalDataSource implements MessageLocalDataSource {
-  HiveMessageLocalDataSource({Box<String>? box}) : _box = box;
+  HiveMessageLocalDataSource({
+    this.userId,
+    Box<String>? box,
+  }) : _box = box;
 
+  final String? userId;
   Box<String>? _box;
   bool _unavailable = false;
 
   static const _boxName = 'chat_messages';
+
+  String _key(String threadId) {
+    if (userId != null && userId!.isNotEmpty) {
+      return '$userId:$threadId';
+    }
+    return threadId;
+  }
 
   Future<Box<String>?> _activeBox() async {
     if (_unavailable) return null;
@@ -36,7 +47,7 @@ class HiveMessageLocalDataSource implements MessageLocalDataSource {
   Future<List<Message>> getCachedMessages(String threadId) async {
     final box = await _activeBox();
     if (box == null) return const [];
-    final raw = box.get(threadId);
+    final raw = box.get(_key(threadId));
     if (raw == null || raw.isEmpty) return const [];
     try {
       final list = jsonDecode(raw) as List<dynamic>;
@@ -53,14 +64,27 @@ class HiveMessageLocalDataSource implements MessageLocalDataSource {
     final box = await _activeBox();
     if (box == null) return;
     final encoded = jsonEncode(messages.map(_messageToJson).toList());
-    await box.put(threadId, encoded);
+    await box.put(_key(threadId), encoded);
   }
 
   @override
   Future<void> clear(String threadId) async {
     final box = await _activeBox();
     if (box == null) return;
-    await box.delete(threadId);
+    await box.delete(_key(threadId));
+  }
+
+  Future<void> clearAllUserData(String targetUserId) async {
+    final box = await _activeBox();
+    if (box == null) return;
+    final prefix = '$targetUserId:';
+    final keysToDelete = box.keys
+        .whereType<String>()
+        .where((k) => k.startsWith(prefix))
+        .toList();
+    for (final key in keysToDelete) {
+      await box.delete(key);
+    }
   }
 
   Map<String, dynamic> _messageToJson(Message m) => {

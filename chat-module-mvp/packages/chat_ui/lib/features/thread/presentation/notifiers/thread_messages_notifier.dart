@@ -11,23 +11,31 @@ import '../../../conversation_list/presentation/providers/conversation_providers
 import '../../../shared/presentation/providers/connectivity_providers.dart';
 import '../../../shared/data/local/hive_identity_store.dart';
 import '../../../shared/presentation/providers/local_cache_providers.dart';
-import '../../../shared/presentation/providers/shared_providers.dart';
+import '../../../../core/utils/link_preview_fetcher.dart';
+import '../../../../core/utils/avatar_utils.dart';
 
 class ThreadMessagesNotifier extends Notifier<List<Message>> {
   late String roomId;
   late String threadId;
   late String currentUserId;
 
-  late final ListMessagesUseCase _listMessagesUseCase;
-  late final WatchNewMessagesUseCase _watchNewMessagesUseCase;
-  late final SendMessageUseCase _sendMessageUseCase;
-  late final UpdateMessageUseCase _updateMessageUseCase;
-  late final DeleteMessageUseCase _deleteMessageUseCase;
-  late final PinMessageUseCase _pinMessageUseCase;
-  late final StopWatchingMessagesUseCase _stopWatchingUseCase;
-  late final GetPinnedMessagesUseCase _getPinnedMessagesUseCase;
-  late final MessageRepository _messageRepository;
-  late final HiveIdentityStore _identityStore;
+  ListMessagesUseCase get _listMessagesUseCase =>
+      ref.read(listMessagesUseCaseProvider);
+  WatchNewMessagesUseCase get _watchNewMessagesUseCase =>
+      ref.read(watchNewMessagesUseCaseProvider);
+  SendMessageUseCase get _sendMessageUseCase =>
+      ref.read(sendMessageUseCaseProvider);
+  UpdateMessageUseCase get _updateMessageUseCase =>
+      ref.read(updateMessageUseCaseProvider);
+  DeleteMessageUseCase get _deleteMessageUseCase =>
+      ref.read(deleteMessageUseCaseProvider);
+  PinMessageUseCase get _pinMessageUseCase =>
+      ref.read(pinMessageUseCaseProvider);
+  GetPinnedMessagesUseCase get _getPinnedMessagesUseCase =>
+      ref.read(getPinnedMessagesUseCaseProvider);
+  MessageRepository get _messageRepository =>
+      ref.read(messageRepositoryProvider);
+  HiveIdentityStore get _identityStore => ref.read(identityStoreProvider);
   StreamSubscription<Message>? _realtimeSub;
   String? myAcsUserId;
 
@@ -35,6 +43,38 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
   bool _hasMore = false;
   bool _isLoadingOlder = false;
   bool _historyLoaded = false;
+  final Map<String, String> _userAvatarCache = {};
+
+  void cacheUserAvatar(String userId, String avatarUrl) {
+    if (userId.isEmpty || avatarUrl.isEmpty || !isNetworkAvatar(avatarUrl)) return;
+    final norm = AcsUserUtils.normalizeAcsId(userId);
+    if (norm.isNotEmpty) {
+      _userAvatarCache[norm] = avatarUrl;
+    }
+  }
+
+  String? getAvatarUrlForUser(String userId) {
+    if (userId.isEmpty) return null;
+    final norm = AcsUserUtils.normalizeAcsId(userId);
+    final cached = _userAvatarCache[norm];
+    if (cached != null && isNetworkAvatar(cached)) {
+      return cached;
+    }
+    return null;
+  }
+
+  void _cacheParticipantAvatars(List<ChatUser> participants) {
+    for (final p in participants) {
+      final av = p.avatarUrl;
+      if (av != null && isNetworkAvatar(av)) {
+        cacheUserAvatar(p.id, av);
+        final acs = p.acsUserId;
+        if (acs != null && acs.isNotEmpty) {
+          cacheUserAvatar(acs, av);
+        }
+      }
+    }
+  }
 
   /// Tin đang ghim của room lấy từ BE — mọi user trong room đều thấy
   /// (ACS không mang thông tin ghim). Rỗng nếu chưa có ghim / BE lỗi.
@@ -63,11 +103,11 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
 
   Future<bool> reactMessage(String messageId, String reactionCode) async {
     final ok = await _messageRepository.reactMessage(
-        roomId: roomId,
-        threadId: threadId,
-        messageId: messageId,
-        reactionCode: reactionCode,
-      );
+      roomId: roomId,
+      threadId: threadId,
+      messageId: messageId,
+      reactionCode: reactionCode,
+    );
     if (ok) await refreshReactions();
     return ok;
   }
@@ -114,16 +154,17 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
     threadId = ref.watch(threadIdProvider);
     currentUserId = ref.watch(currentUserIdProvider);
 
-    _listMessagesUseCase = ref.watch(listMessagesUseCaseProvider);
-    _watchNewMessagesUseCase = ref.watch(watchNewMessagesUseCaseProvider);
-    _sendMessageUseCase = ref.watch(sendMessageUseCaseProvider);
-    _updateMessageUseCase = ref.watch(updateMessageUseCaseProvider);
-    _deleteMessageUseCase = ref.watch(deleteMessageUseCaseProvider);
-    _pinMessageUseCase = ref.watch(pinMessageUseCaseProvider);
-    _stopWatchingUseCase = ref.watch(stopWatchingMessagesUseCaseProvider);
-    _getPinnedMessagesUseCase = ref.watch(getPinnedMessagesUseCaseProvider);
-    _messageRepository = ref.watch(messageRepositoryProvider);
-    _identityStore = ref.watch(identityStoreProvider);
+    final stopWatchingUseCase =
+        ref.watch(stopWatchingMessagesUseCaseProvider);
+    ref.watch(listMessagesUseCaseProvider);
+    ref.watch(watchNewMessagesUseCaseProvider);
+    ref.watch(sendMessageUseCaseProvider);
+    ref.watch(updateMessageUseCaseProvider);
+    ref.watch(deleteMessageUseCaseProvider);
+    ref.watch(pinMessageUseCaseProvider);
+    ref.watch(getPinnedMessagesUseCaseProvider);
+    ref.watch(messageRepositoryProvider);
+    ref.watch(identityStoreProvider);
 
     // 1. Cố gắng tìm acsUserId của bản thân trong danh sách participant của phòng chat hiện tại (đồng bộ)
     try {
@@ -160,13 +201,45 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         unawaited(refreshReactions());
         return;
       }
+      if (message.type == MessageType.messagePinUpdate) {
+        updateMessagePin(message.id, message.pin);
+        return;
+      }
+      if (message.type == MessageType.roomPinnedUpdate ||
+          message.type == MessageType.roomUnpinnedUpdate) {
+        return;
+      }
+      if (message.type == MessageType.roomUpdatedUpdate ||
+          message.type == MessageType.memberJoinedUpdate ||
+          message.type == MessageType.memberLeftUpdate ||
+          message.type == MessageType.memberRemovedUpdate ||
+          (message.type == MessageType.system &&
+              (message.metadata?['eventType'] == 'RoomUpdated' ||
+                  message.metadata?['eventType'] == 'RoomRoleChanged' ||
+                  message.metadata?['eventType'] ==
+                      'RoomOwnershipTransferred'))) {
+        _handleMemberEventSignal(message);
+        return;
+      }
+      if (message.type == MessageType.system) {
+        if (message.content.contains('đã được thêm vào nhóm') ||
+            message.content.contains('đã bị xóa khỏi nhóm')) {
+          final hasRecentDetailedMessage = state.any((m) =>
+              m.type == MessageType.system &&
+              (m.content.contains('đã thêm') || m.content.contains('đã xóa')) &&
+              DateTime.now().difference(m.createdAt).inSeconds < 10);
+          if (hasRecentDetailedMessage) return;
+        }
+      }
       // Tin bị xoá (soft-delete ACS): đánh dấu deletedOn thay vì loại khỏi
       // danh sách — UI hiển thị placeholder "(tin nhắn đã bị xoá)".
       if (message.isDeleted) {
         final i = state.indexWhere((m) => m.id == message.id);
         if (i != -1) {
           state = [...state];
-          state[i] = state[i].copyWith(deletedOn: message.deletedOn);
+          state[i] = state[i].copyWith(
+            deletedOn: message.deletedOn ?? DateTime.now(),
+          );
         }
         return;
       }
@@ -200,20 +273,40 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         list.insert(insertAt, message);
       }
       state = list;
+      sendReadMessageIfNeeded();
 
-      if (message.metadata == null || message.metadata!.isEmpty) {
+      final isMediaPlaceholder = message.content == '[Hình ảnh]' ||
+          message.content == 'Hình ảnh' ||
+          message.content == '[Tệp tin]' ||
+          message.content == 'Tệp tin';
+      if ((message.metadata == null || message.metadata!.isEmpty) &&
+          isMediaPlaceholder) {
         unawaited(_enrichMessageMetadata(message.id));
       }
     });
 
     ref.onDispose(() {
       unawaited(_realtimeSub?.cancel());
-      unawaited(_stopWatchingUseCase(threadId));
+      unawaited(stopWatchingUseCase(threadId));
     });
 
     unawaited(_loadHistory());
     unawaited(refreshReactions());
+    unawaited(_fetchMembersIfNeeded());
     return const [];
+  }
+
+  Future<void> _fetchMembersIfNeeded() async {
+    try {
+      final members = await ref.read(getMembersUseCaseProvider)(roomId);
+      if (ref.mounted && members.isNotEmpty) {
+        _cacheParticipantAvatars(members);
+        ref.read(conversationListProvider.notifier).updateRoomDetails(
+              roomId,
+              participants: members,
+            );
+      }
+    } catch (_) {}
   }
 
   /// Khi nhận event realtime NewMessage từ backend nhưng thiếu metadata (do payload
@@ -238,6 +331,513 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
       developer.log('Enrich message metadata failed for $messageId',
           error: e, stackTrace: st);
     }
+  }
+
+  void _handleMemberEventSignal(Message message) {
+    final metadata = message.metadata;
+    if (metadata == null) return;
+    final eventType = metadata['eventType']?.toString();
+
+    if (eventType == 'MemberRemoved') {
+      final payload = (metadata['payload'] is Map)
+          ? (metadata['payload'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      final removedUserId =
+          (metadata['removedUserId'] ?? payload['removedUserId'] ?? '')
+              .toString();
+      final removedByUserId = (metadata['removedByUserId'] ??
+              metadata['actorUserId'] ??
+              metadata['actorId'] ??
+              payload['removedByUserId'] ??
+              payload['actorUserId'] ??
+              '')
+          .toString();
+
+      final isSelfRemoved = (removedUserId.isNotEmpty &&
+          (_isSameUser(removedUserId, currentUserId) ||
+              (myAcsUserId != null &&
+                  _isSameUser(removedUserId, myAcsUserId!))));
+      if (isSelfRemoved) {
+        metadata['isSelf'] = true;
+      }
+
+      final rawActorName = metadata['actorName']?.toString() ??
+          payload['actorName']?.toString() ??
+          metadata['removedByName']?.toString();
+      final rawTargetName = metadata['removedUserName']?.toString() ??
+          payload['removedUserName']?.toString() ??
+          metadata['targetName']?.toString();
+
+      final actorName = (rawActorName != null && rawActorName.isNotEmpty)
+          ? rawActorName
+          : _getDisplayName(removedByUserId, '');
+      final targetName = (rawTargetName != null && rawTargetName.isNotEmpty)
+          ? rawTargetName
+          : _getDisplayName(removedUserId, '');
+
+      final String content;
+      if (isSelfRemoved) {
+        content = 'Bạn đã bị xóa khỏi phòng';
+      } else if (actorName.isNotEmpty && targetName.isNotEmpty) {
+        content = '**$actorName** đã xóa **$targetName** khỏi nhóm';
+      } else if (targetName.isNotEmpty) {
+        content = '**$targetName** đã bị xóa khỏi nhóm';
+      } else if (actorName.isNotEmpty) {
+        content = '**$actorName** đã xóa một thành viên khỏi nhóm';
+      } else {
+        content = 'Một thành viên đã bị xóa khỏi nhóm';
+      }
+      _appendSystemSignalMessage(content, metadata: metadata);
+      return;
+    }
+
+    if (eventType == 'MemberJoined') {
+      final addedByUserId = (metadata['addedByUserId'] ??
+              metadata['actorUserId'] ??
+              metadata['actorId'] ??
+              '')
+          .toString();
+
+      final rawActorName = metadata['actorName']?.toString() ??
+          metadata['addedByName']?.toString();
+      final actorName = (rawActorName != null && rawActorName.isNotEmpty)
+          ? rawActorName
+          : _getDisplayName(addedByUserId, '');
+
+      final addedUsers = metadata['addedUsers'] as List? ?? const [];
+      final addedNamesFromList = addedUsers
+          .map((u) => u is Map ? u['userName']?.toString().trim() : null)
+          .where((n) => n != null && n.isNotEmpty)
+          .cast<String>()
+          .join(', ');
+
+      final addedUserIds = (metadata['addedUserIds'] as List? ?? const [])
+          .map((e) => e.toString())
+          .toList();
+      final targetNamesFromIds = addedUserIds
+          .map((id) => _getDisplayName(id, ''))
+          .where((n) => n.isNotEmpty)
+          .join(', ');
+
+      final rawTargetNames =
+          (metadata['targetName'] ?? metadata['userName'] ?? '')
+              .toString()
+              .trim();
+
+      final targetNames = addedNamesFromList.isNotEmpty
+          ? addedNamesFromList
+          : (targetNamesFromIds.isNotEmpty
+              ? targetNamesFromIds
+              : rawTargetNames);
+
+      final String content;
+      if (actorName.isNotEmpty && targetNames.isNotEmpty) {
+        content = '**$actorName** đã thêm **$targetNames** vào nhóm';
+      } else if (targetNames.isNotEmpty) {
+        content = '**$targetNames** đã vào nhóm';
+      } else if (actorName.isNotEmpty) {
+        content = '**$actorName** đã thêm thành viên mới vào nhóm';
+      } else {
+        content = 'Thành viên mới đã vào nhóm';
+      }
+      _appendSystemSignalMessage(content);
+      return;
+    }
+
+    if (eventType == 'MemberLeft') {
+      final userId =
+          (metadata['userId'] ?? metadata['actorUserId'] ?? '').toString();
+      final rawUserName = metadata['actorName']?.toString() ??
+          metadata['userName']?.toString() ??
+          metadata['targetName']?.toString();
+
+      final userName = (rawUserName != null && rawUserName.isNotEmpty)
+          ? rawUserName
+          : _getDisplayName(userId, '');
+
+      final content = userName.isNotEmpty
+          ? '**$userName** đã rời khỏi nhóm'
+          : 'Một thành viên đã rời khỏi nhóm';
+      _appendSystemSignalMessage(content);
+      return;
+    }
+
+    if (eventType == 'RoomRoleChanged') {
+      final changedByUserId = (metadata['changedByUserId'] ??
+              metadata['actorId'] ??
+              metadata['actorUserId'] ??
+              metadata['fromUserId'] ??
+              '')
+          .toString();
+      final targetUserId = (metadata['targetUserId'] ??
+              metadata['userId'] ??
+              metadata['memberUserId'] ??
+              metadata['toUserId'] ??
+              '')
+          .toString();
+      final isAdmin = metadata['isAdmin'] == true ||
+          metadata['role']?.toString().toLowerCase() == 'admin' ||
+          metadata['newRole']?.toString().toLowerCase() == 'admin';
+
+      final rawActorName = metadata['actorName']?.toString() ??
+          metadata['changedByName']?.toString() ??
+          metadata['actorDisplayName']?.toString() ??
+          metadata['fromUserName']?.toString();
+      final rawTargetName = metadata['targetName']?.toString() ??
+          metadata['memberName']?.toString() ??
+          metadata['userName']?.toString() ??
+          metadata['memberUserName']?.toString() ??
+          metadata['userDisplayName']?.toString() ??
+          metadata['toUserName']?.toString();
+
+      final actorName = (rawActorName != null && rawActorName.trim().isNotEmpty)
+          ? rawActorName.trim()
+          : _getDisplayName(changedByUserId, '');
+      final targetName =
+          (rawTargetName != null && rawTargetName.trim().isNotEmpty)
+              ? rawTargetName.trim()
+              : _getDisplayName(targetUserId, '');
+
+      final String content;
+      if (actorName.isNotEmpty && targetName.isNotEmpty) {
+        content = isAdmin
+            ? '**$actorName** đã phong **$targetName** làm Admin'
+            : '**$actorName** đã gỡ quyền Admin của **$targetName**';
+      } else if (targetName.isNotEmpty) {
+        content = isAdmin
+            ? '**$targetName** đã được phong làm Admin'
+            : '**$targetName** đã bị gỡ quyền Admin';
+      } else if (actorName.isNotEmpty) {
+        content = isAdmin
+            ? '**$actorName** đã thêm Admin mới'
+            : '**$actorName** đã gỡ quyền Admin';
+      } else {
+        content = 'Quyền Admin trong phòng đã thay đổi';
+      }
+      _appendSystemSignalMessage(content);
+      return;
+    }
+
+    if (eventType == 'RoomOwnershipTransferred') {
+      final actorId = (metadata['transferredByUserId'] ??
+              metadata['actorId'] ??
+              metadata['fromUserId'] ??
+              metadata['changedByUserId'] ??
+              '')
+          .toString();
+      final targetId = (metadata['transferredToUserId'] ??
+              metadata['targetUserId'] ??
+              metadata['toUserId'] ??
+              metadata['newOwnerUserId'] ??
+              '')
+          .toString();
+
+      final rawActorName = metadata['actorName']?.toString() ??
+          metadata['transferredByName']?.toString() ??
+          metadata['fromUserName']?.toString();
+      final rawTargetName = metadata['targetName']?.toString() ??
+          metadata['toUserName']?.toString() ??
+          metadata['newOwnerName']?.toString();
+
+      final actorName = (rawActorName != null && rawActorName.isNotEmpty)
+          ? rawActorName
+          : _getDisplayName(actorId, '');
+      final targetName = (rawTargetName != null && rawTargetName.isNotEmpty)
+          ? rawTargetName
+          : _getDisplayName(targetId, '');
+
+      final String content;
+      if (actorName.isNotEmpty && targetName.isNotEmpty) {
+        content =
+            '**$actorName** đã chuyển quyền Trưởng phòng cho **$targetName**';
+      } else if (targetName.isNotEmpty) {
+        content = '**$targetName** đã trở thành Trưởng phòng mới';
+      } else if (actorName.isNotEmpty) {
+        content = '**$actorName** đã chuyển quyền Trưởng phòng';
+      } else {
+        content = 'Quyền Trưởng phòng đã được chuyển giao';
+      }
+      _appendSystemSignalMessage(content, metadata: metadata);
+      return;
+    }
+
+    if (eventType == 'RoomUpdated' ||
+        message.type == MessageType.roomUpdatedUpdate) {
+      final payload = (metadata['payload'] is Map)
+          ? (metadata['payload'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      final roomName =
+          (metadata['roomName'] ?? payload['roomName'] ?? '').toString().trim();
+      final avatarUrl = (metadata['avatarUrl'] ?? payload['avatarUrl'] ?? '')
+          .toString()
+          .trim();
+      final updatedByUserId = (metadata['updatedByUserId'] ??
+              metadata['actorId'] ??
+              payload['updatedByUserId'] ??
+              payload['actorId'] ??
+              '')
+          .toString();
+
+      final rawActorName = metadata['actorName']?.toString() ??
+          payload['actorName']?.toString() ??
+          metadata['updatedByName']?.toString() ??
+          payload['updatedByName']?.toString();
+
+      final actorName = (rawActorName != null && rawActorName.trim().isNotEmpty)
+          ? rawActorName.trim()
+          : _getDisplayName(updatedByUserId, '');
+
+      final conversations = ref.read(conversationListProvider);
+      final conversation = conversations
+          .where((c) => c.id == roomId || c.threadId == threadId)
+          .firstOrNull;
+
+      final currentRoomName = (conversation?.roomName ?? '').trim();
+      final currentAvatarUrl = (conversation?.avatarUrl ?? '').trim();
+
+      final isNameChanged = roomName.isNotEmpty &&
+          currentRoomName.isNotEmpty &&
+          roomName != currentRoomName;
+      final isAvatarChanged = avatarUrl.isNotEmpty &&
+          (currentAvatarUrl.isEmpty || avatarUrl != currentAvatarUrl);
+
+      final String content;
+      if (isNameChanged && isAvatarChanged) {
+        content = actorName.isNotEmpty
+            ? '**$actorName** đã đổi tên và ảnh đại diện nhóm'
+            : 'Tên và ảnh đại diện nhóm đã được cập nhật';
+      } else if (isNameChanged) {
+        content = actorName.isNotEmpty
+            ? '**$actorName** đã đổi tên nhóm thành **$roomName**'
+            : 'Tên nhóm đã được đổi thành **$roomName**';
+      } else if (isAvatarChanged) {
+        content = actorName.isNotEmpty
+            ? '**$actorName** đã cập nhật ảnh đại diện nhóm'
+            : 'Ảnh đại diện nhóm đã được cập nhật';
+      } else if (roomName.isNotEmpty && currentRoomName.isEmpty) {
+        content = actorName.isNotEmpty
+            ? '**$actorName** đã đặt tên nhóm thành **$roomName**'
+            : 'Tên nhóm đã được đặt thành **$roomName**';
+      } else {
+        content = actorName.isNotEmpty
+            ? '**$actorName** đã cập nhật ảnh đại diện nhóm'
+            : 'Ảnh đại diện nhóm đã được cập nhật';
+      }
+      _appendSystemSignalMessage(content, metadata: metadata);
+      return;
+    }
+  }
+
+  String _getDisplayName(String userId, String fallback) {
+    if (userId.isEmpty) return fallback;
+    final conversations = ref.read(conversationListProvider);
+    final conversation = conversations
+        .where((c) => c.id == roomId || c.threadId == threadId)
+        .firstOrNull;
+
+    if (conversation != null) {
+      final user = conversation.participants.where((p) {
+        if (_isSameUser(userId, p.id) ||
+            _isSameUser(userId, p.acsUserId ?? '')) {
+          return true;
+        }
+        if (fallback.trim().isNotEmpty &&
+            p.displayName.trim().isNotEmpty &&
+            fallback.trim() == p.displayName.trim()) {
+          return true;
+        }
+        return false;
+      }).firstOrNull;
+      if (user != null && user.displayName.isNotEmpty) {
+        return user.displayName;
+      }
+    }
+
+    for (final m in state.reversed) {
+      if (m.senderId.isNotEmpty && m.senderDisplayName.isNotEmpty) {
+        if (_isSameUser(userId, m.senderId)) {
+          return m.senderDisplayName;
+        }
+      }
+    }
+    return fallback;
+  }
+
+  bool _isSameUser(String raw1, String raw2) {
+    if (raw1.isEmpty || raw2.isEmpty) return false;
+    final clean1 = raw1.startsWith('8:acs:') ? raw1.substring(6) : raw1;
+    final clean2 = raw2.startsWith('8:acs:') ? raw2.substring(6) : raw2;
+    return clean1.trim().toLowerCase() == clean2.trim().toLowerCase();
+  }
+
+  void sendReadMessageIfNeeded() {
+    final lastMsg = state
+        .where((m) =>
+            m.id.isNotEmpty &&
+            !m.id.startsWith('sys_') &&
+            !m.id.startsWith('local-') &&
+            m.type != MessageType.system)
+        .lastOrNull;
+    if (lastMsg != null && lastMsg.id.isNotEmpty) {
+      _messageRepository.sendReadMessage(lastMsg.id);
+    }
+  }
+
+  void _appendSystemSignalMessage(String content,
+      {Map<String, dynamic>? metadata}) {
+    if (state.isNotEmpty && state.last.content == content) return;
+
+    final sysMsg = MessageModel(
+      id: 'sys_${DateTime.now().millisecondsSinceEpoch}',
+      threadId: threadId,
+      senderId: '',
+      senderDisplayName: '',
+      content: content,
+      type: MessageType.system,
+      createdAt: DateTime.now(),
+      metadata: metadata,
+    );
+    state = [...state, sysMsg];
+  }
+
+  Message _enrichSystemMessageContent(Message message) {
+    if (message.type != MessageType.system || message.metadata == null) return message;
+    // Nếu tin nhắn hệ thống đã chứa đủ cả tên actor và target (đã bôi đậm 2 tên trở lên), giữ nguyên nội dung từ REST API
+    final countBold = '**'.allMatches(message.content).length;
+    if (countBold >= 4) return message;
+
+    final metadata = message.metadata!;
+    final eventType = metadata['eventType']?.toString();
+    if (eventType == null) return message;
+
+    final payload = (metadata['payload'] is Map)
+        ? (metadata['payload'] as Map).cast<String, dynamic>()
+        : <String, dynamic>{};
+
+    final String? actorId = (metadata['actorUserId'] ??
+            metadata['actorId'] ??
+            metadata['addedByUserId'] ??
+            metadata['removedByUserId'] ??
+            metadata['changedByUserId'] ??
+            metadata['transferredByUserId'] ??
+            payload['actorUserId'] ??
+            payload['addedByUserId'] ??
+            payload['removedByUserId'] ??
+            payload['changedByUserId'])
+        ?.toString();
+    final String? targetId = (metadata['removedUserId'] ??
+            metadata['userId'] ??
+            metadata['memberUserId'] ??
+            metadata['targetUserId'] ??
+            metadata['toUserId'] ??
+            metadata['transferredToUserId'] ??
+            payload['removedUserId'] ??
+            payload['targetUserId'] ??
+            payload['toUserId'])
+        ?.toString();
+
+    final rawActorName = metadata['actorName']?.toString() ??
+        metadata['actorDisplayName']?.toString() ??
+        metadata['changedByName']?.toString() ??
+        metadata['addedByName']?.toString() ??
+        metadata['removedByName']?.toString() ??
+        metadata['transferredByName']?.toString() ??
+        metadata['updatedByName']?.toString() ??
+        payload['actorName']?.toString() ??
+        payload['actorDisplayName']?.toString() ??
+        payload['changedByName']?.toString() ??
+        payload['addedByName']?.toString() ??
+        payload['removedByName']?.toString();
+    final rawTargetName = metadata['removedUserName']?.toString() ??
+        metadata['removedUserDisplayName']?.toString() ??
+        metadata['targetName']?.toString() ??
+        metadata['targetDisplayName']?.toString() ??
+        metadata['userName']?.toString() ??
+        metadata['memberName']?.toString() ??
+        metadata['toUserName']?.toString() ??
+        metadata['newOwnerName']?.toString() ??
+        payload['removedUserName']?.toString() ??
+        payload['removedUserDisplayName']?.toString() ??
+        payload['targetName']?.toString() ??
+        payload['targetDisplayName']?.toString() ??
+        payload['userName']?.toString() ??
+        payload['toUserName']?.toString();
+
+    final actorName = (rawActorName != null && rawActorName.trim().isNotEmpty)
+        ? rawActorName.trim()
+        : (actorId != null && actorId.isNotEmpty ? _getDisplayName(actorId, '') : '');
+    final targetName = (rawTargetName != null && rawTargetName.trim().isNotEmpty)
+        ? rawTargetName.trim()
+        : (targetId != null && targetId.isNotEmpty ? _getDisplayName(targetId, '') : '');
+
+    String? newContent;
+    if (eventType == 'MemberRemoved') {
+      final isSelf = targetId != null &&
+          (_isSameUser(targetId, currentUserId) ||
+              (myAcsUserId != null && _isSameUser(targetId, myAcsUserId!)));
+      if (isSelf) {
+        newContent = 'Bạn đã bị xóa khỏi phòng';
+      } else if (actorName.isNotEmpty && targetName.isNotEmpty) {
+        newContent = '**$actorName** đã xóa **$targetName** khỏi nhóm';
+      } else if (targetName.isNotEmpty) {
+        newContent = '**$targetName** đã bị xóa khỏi nhóm';
+      } else if (actorName.isNotEmpty) {
+        newContent = '**$actorName** đã xóa một thành viên khỏi nhóm';
+      }
+    } else if (eventType == 'MemberJoined') {
+      final addedUsers = (payload['addedUsers'] ?? metadata['addedUsers']) as List? ?? const [];
+      final addedNames = addedUsers
+          .map((u) => u is Map ? (u['displayName'] ?? u['userName'] ?? u['userDisplayName'])?.toString().trim() : u.toString().trim())
+          .where((n) => n != null && n.isNotEmpty)
+          .cast<String>()
+          .join(', ');
+      final finalTargetNames = addedNames.isNotEmpty ? addedNames : targetName;
+
+      if (actorName.isNotEmpty && finalTargetNames.isNotEmpty) {
+        newContent = '**$actorName** đã thêm **$finalTargetNames** vào nhóm';
+      } else if (finalTargetNames.isNotEmpty) {
+        newContent = '**$finalTargetNames** đã vào nhóm';
+      } else if (actorName.isNotEmpty) {
+        newContent = '**$actorName** đã thêm thành viên mới vào nhóm';
+      }
+    } else if (eventType == 'MemberLeft') {
+      final name = actorName.isNotEmpty ? actorName : targetName;
+      if (name.isNotEmpty) {
+        newContent = '**$name** đã rời khỏi nhóm';
+      }
+    } else if (eventType == 'RoomRoleChanged') {
+      final isAdmin = metadata['isAdmin'] == true ||
+          payload['isAdmin'] == true ||
+          metadata['role']?.toString().toLowerCase() == 'admin' ||
+          payload['role']?.toString().toLowerCase() == 'admin' ||
+          metadata['newRole']?.toString().toLowerCase() == 'admin';
+      if (actorName.isNotEmpty && targetName.isNotEmpty) {
+        newContent = isAdmin
+            ? '**$actorName** đã phong **$targetName** làm Admin'
+            : '**$actorName** đã gỡ quyền Admin của **$targetName**';
+      } else if (targetName.isNotEmpty) {
+        newContent = isAdmin
+            ? '**$targetName** đã được phong làm Admin'
+            : '**$targetName** đã bị gỡ quyền Admin';
+      } else if (actorName.isNotEmpty) {
+        newContent = isAdmin
+            ? '**$actorName** đã thêm Admin mới'
+            : '**$actorName** đã gỡ quyền Admin';
+      }
+    } else if (eventType == 'RoomOwnershipTransferred') {
+      if (actorName.isNotEmpty && targetName.isNotEmpty) {
+        newContent = '**$actorName** đã chuyển quyền Trưởng phòng cho **$targetName**';
+      } else if (targetName.isNotEmpty) {
+        newContent = '**$targetName** đã trở thành Trưởng phòng mới';
+      } else if (actorName.isNotEmpty) {
+        newContent = '**$actorName** đã chuyển quyền Trưởng phòng';
+      }
+    }
+
+    if (newContent != null && newContent.isNotEmpty) {
+      return message.copyWith(content: newContent);
+    }
+    return message;
   }
 
   /// Cache-first: hiện tin đã lưu ngay lập tức, sau đó refresh từ remote
@@ -287,6 +887,7 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
             name: 'ChatModule');
         unawaited(_identityStore.setMyAcsUserId(currentUserId, myAcsUserId));
         if (token.participants.isNotEmpty) {
+          _cacheParticipantAvatars(token.participants);
           ref
               .read(conversationListProvider.notifier)
               .updateRoomParticipants(roomId, token.participants);
@@ -298,8 +899,6 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         }
       }
     } catch (e, st) {
-      // join-room fail — log ra để debug. Trước đây `catch (_) {}` nuốt lỗi
-      // âm thầm nên không biết request treo/hết hạn/lỗi HTTP.
       developer.log('join-room/getAccessToken failed',
           name: 'ChatModule', error: e, stackTrace: st);
       await _showCachedMessagesIfAny();
@@ -310,19 +909,50 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
           await _listMessagesUseCase(roomId: roomId, threadId: threadId);
       if (!ref.mounted) return;
 
-      final remoteItems = result.items.toList();
-      // Giữ tin local chưa có trên remote (tin đang gửi dở / vừa gửi mà list
-      // API chưa kịp trả) — trước đây replace toàn bộ bằng remote làm tin vừa
-      // gửi biến mất rồi hiện lại qua realtime → cảm giác "lật ngược tin".
+      final remoteItems = <Message>[];
+      for (final m in result.items) {
+        final content = m.content.trim();
+        final metadata = m.metadata;
+
+        if (content.isEmpty && (metadata == null || metadata.isEmpty)) {
+          continue;
+        }
+
+        final av = metadata?['senderAvatarUrl'] ??
+            metadata?['avatarUrl'] ??
+            metadata?['senderAvatar'] ??
+            metadata?['userAvatarUrl'];
+        if (av != null && isNetworkAvatar(av.toString())) {
+          cacheUserAvatar(m.senderId, av.toString());
+        }
+
+        remoteItems.add(m);
+      }
       final remoteIds = remoteItems.map((m) => m.id).toSet();
-      final localExtras =
-          state.where((m) => !remoteIds.contains(m.id)).toList();
+      final localExtras = state.where((m) {
+        if (remoteIds.contains(m.id)) return false;
+        final content = m.content.trim();
+        if (content.isEmpty && (m.metadata == null || m.metadata!.isEmpty)) {
+          return false;
+        }
+        if (m.type == MessageType.memberJoinedUpdate ||
+            m.type == MessageType.memberLeftUpdate ||
+            m.type == MessageType.memberRemovedUpdate ||
+            m.type == MessageType.roomUpdatedUpdate) {
+          return false;
+        }
+        return true;
+      }).toList();
       final mergedItems = remoteItems.map((remoteMsg) {
+        var processed = remoteMsg;
+        if (processed.type == MessageType.system && processed.metadata != null) {
+          processed = _enrichSystemMessageContent(processed);
+        }
         final localMsg = state.where((m) => m.id == remoteMsg.id).firstOrNull;
         if (localMsg != null && localMsg.pin) {
-          return remoteMsg.copyWith(pin: true);
+          processed = processed.copyWith(pin: true);
         }
-        return remoteMsg;
+        return processed;
       }).toList();
 
       state = _chronological([...mergedItems, ...localExtras]);
@@ -337,6 +967,7 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
       unawaited(_loadPinnedMessages());
       if (ref.mounted) {
         state = [...state];
+        sendReadMessageIfNeeded();
       }
     }
   }
@@ -347,11 +978,24 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
   Future<void> _showCachedMessagesIfAny() async {
     try {
       final cached = await _messageRepository.getCachedMessages(threadId);
-      final visible = cached.toList();
+      final visible = cached.where((m) {
+        final content = m.content.trim();
+        if (content.isEmpty && (m.metadata == null || m.metadata!.isEmpty)) {
+          return false;
+        }
+        if (m.type == MessageType.memberJoinedUpdate ||
+            m.type == MessageType.memberLeftUpdate ||
+            m.type == MessageType.memberRemovedUpdate ||
+            m.type == MessageType.roomUpdatedUpdate) {
+          return false;
+        }
+        return true;
+      }).toList();
       if (ref.mounted && visible.isNotEmpty && state.isEmpty) {
         state = _chronological(visible);
         _historyLoaded = true;
         state = [...state];
+        sendReadMessageIfNeeded();
       }
     } catch (_) {}
   }
@@ -391,8 +1035,10 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
       final result = await _listMessagesUseCase(
           roomId: roomId, threadId: threadId, cursor: _cursor);
       if (!ref.mounted) return;
-      final visible = result.items.toList();
-      state = [..._chronological(visible), ...state];
+      final existingIds = state.map((m) => m.id).toSet();
+      final visible =
+          result.items.where((m) => !existingIds.contains(m.id)).toList();
+      state = _chronological([...visible, ...state]);
       _cursor = result.cursor;
       _hasMore = result.hasMore;
     } catch (e, st) {
@@ -406,6 +1052,8 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
   bool get isLoadingOlder => _isLoadingOlder;
 
   bool get hasMore => _hasMore;
+
+  bool get hasReachedEnd => !_hasMore;
 
   bool get historyLoaded => _historyLoaded;
 
@@ -469,6 +1117,16 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
     String content, {
     Map<String, dynamic>? metaData,
   }) async {
+    var finalMetaData = metaData;
+    if (finalMetaData == null) {
+      final urlMatch = RegExp(r'(https?://[^\s<]+)').firstMatch(content);
+      if (urlMatch != null) {
+        final linkUrl = urlMatch.group(0)!;
+        final previewData = await LinkPreviewFetcher.fetch(linkUrl);
+        finalMetaData = previewData.toJson();
+      }
+    }
+
     final optimisticId = 'local-${DateTime.now().microsecondsSinceEpoch}';
     final optimistic = Message(
       id: optimisticId,
@@ -479,7 +1137,7 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
       type: MessageType.text,
       createdAt: DateTime.now(),
       status: MessageDeliveryStatus.sending,
-      metadata: metaData,
+      metadata: finalMetaData,
     );
     state = [...state, optimistic];
 
@@ -488,7 +1146,7 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         roomId: roomId,
         threadId: threadId,
         content: content,
-        metaData: metaData,
+        metaData: finalMetaData,
       );
       if (!ref.mounted) return;
       // Thay optimistic bằng tin thật, đồng thời loại bản trùng cùng id
@@ -531,13 +1189,16 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         .setRoomProgress(roomId, initialItems);
 
     final uploadedFiles = <Map<String, String>>[];
+    final failedFiles = <String>[];
 
     try {
       for (final item in imageFiles) {
         try {
+          final mimeType = ChatMimeUtils.lookupMimeType(item.fileName);
           final url = await uploadSasUseCase(
             filePath: item.path,
             fileName: item.fileName,
+            contentType: mimeType,
             onProgress: (sent, total) {
               if (total > 0) {
                 final ratio = (sent / total).clamp(0.01, 0.99);
@@ -553,32 +1214,39 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
               .setItemProgress(roomId, item.fileName, 1.0);
 
           final file = File(item.path);
-          final bytes = await file.readAsBytes();
-          final codec = await instantiateImageCodec(bytes);
-          final frame = await codec.getNextFrame();
-          final ext = item.fileName.split('.').last.toLowerCase();
-          final mimeType = ext == 'png'
-              ? 'image/png'
-              : ext == 'gif'
-                  ? 'image/gif'
-                  : 'image/jpeg';
+          int width = 0;
+          int height = 0;
+          try {
+            final bytes = await file.readAsBytes();
+            final codec = await instantiateImageCodec(bytes);
+            final frame = await codec.getNextFrame();
+            width = frame.image.width;
+            height = frame.image.height;
+          } catch (e) {
+            developer.log(
+                'Failed to decode image dimensions for ${item.fileName}: $e');
+          }
 
           uploadedFiles.add({
             'url': url,
             'fileName': item.fileName,
             'mimeType': mimeType,
-            'width': frame.image.width.toString(),
-            'height': frame.image.height.toString(),
+            'width': width.toString(),
+            'height': height.toString(),
           });
         } catch (e, st) {
           developer.log('Upload image failed for ${item.fileName}',
               error: e, stackTrace: st);
+          failedFiles.add(item.fileName);
         }
       }
 
       if (uploadedFiles.isNotEmpty) {
+        final firstFile = uploadedFiles.first;
         final metaData = <String, dynamic>{
           'type': 'image',
+          'url': firstFile['url']?.toString() ?? '',
+          'fileName': firstFile['fileName']?.toString() ?? '',
           'files': uploadedFiles
               .map((item) => {
                     'url': item['url']?.toString() ?? '',
@@ -592,6 +1260,8 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
 
         await sendMessage('[Hình ảnh]', metaData: metaData);
       }
+
+      _reportUploadFailures(failedFiles, imageFiles.length);
     } finally {
       ref
           .read(mediaUploadProgressProvider.notifier)
@@ -619,13 +1289,16 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         .setRoomProgress(roomId, initialItems);
 
     final uploadedFiles = <Map<String, String>>[];
+    final failedFiles = <String>[];
 
     try {
       for (final item in fileItems) {
         try {
+          final mimeType = ChatMimeUtils.lookupMimeType(item.fileName);
           final url = await uploadSasUseCase(
             filePath: item.path,
             fileName: item.fileName,
+            contentType: mimeType,
             onProgress: (sent, total) {
               if (total > 0) {
                 final ratio = (sent / total).clamp(0.01, 0.99);
@@ -642,8 +1315,6 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
 
           final file = File(item.path);
           final fileSize = file.existsSync() ? await file.length() : 0;
-          final ext = item.fileName.split('.').last.toLowerCase();
-          final mimeType = _lookupFileMimeType(ext);
 
           uploadedFiles.add({
             'url': url,
@@ -654,18 +1325,23 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         } catch (e, st) {
           developer.log('Upload file failed for ${item.fileName}',
               error: e, stackTrace: st);
+          failedFiles.add(item.fileName);
         }
       }
 
       if (uploadedFiles.isNotEmpty) {
+        final firstFile = uploadedFiles.first;
         final metaData = <String, dynamic>{
           'type': 'file',
+          'url': firstFile['url']?.toString() ?? '',
+          'fileName': firstFile['fileName']?.toString() ?? '',
+          'fileSize': firstFile['fileSize']?.toString() ?? '0',
           'files': uploadedFiles
               .map((item) => {
                     'url': item['url']?.toString() ?? '',
                     'fileName': item['fileName']?.toString() ?? '',
-                    'mimeType':
-                        item['mimeType']?.toString() ?? 'application/octet-stream',
+                    'mimeType': item['mimeType']?.toString() ??
+                        'application/octet-stream',
                     'fileSize': item['fileSize']?.toString() ?? '0',
                   })
               .toList(),
@@ -673,6 +1349,8 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
 
         await sendMessage('[Tệp tin]', metaData: metaData);
       }
+
+      _reportUploadFailures(failedFiles, fileItems.length);
     } finally {
       ref
           .read(mediaUploadProgressProvider.notifier)
@@ -680,28 +1358,98 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
     }
   }
 
-  static String _lookupFileMimeType(String ext) {
-    switch (ext) {
-      case 'pdf':
-        return 'application/pdf';
-      case 'doc':
-      case 'docx':
-        return 'application/msword';
-      case 'xls':
-      case 'xlsx':
-        return 'application/vnd.ms-excel';
-      case 'ppt':
-      case 'pptx':
-        return 'application/vnd.ms-powerpoint';
-      case 'zip':
-      case 'rar':
-      case '7z':
-        return 'application/zip';
-      case 'txt':
-        return 'text/plain';
-      default:
-        return 'application/octet-stream';
+  /// Tải video được chọn lên qua Azure Blob SAS URL và gửi tin nhắn video.
+  /// Mỗi video gửi 1 tin riêng (bubble đang render theo metadata['fileName']).
+  Future<void> sendVideos(
+    List<({String path, String fileName})> videoItems,
+  ) async {
+    if (videoItems.isEmpty) return;
+    final uploadSasUseCase = ref.read(uploadFileViaSasUseCaseProvider);
+
+    final initialItems = videoItems
+        .map((item) => MediaUploadItemProgress(
+              fileName: item.fileName,
+              path: item.path,
+              progress: 0.01,
+            ))
+        .toList();
+
+    ref
+        .read(mediaUploadProgressProvider.notifier)
+        .setRoomProgress(roomId, initialItems);
+
+    final uploadedFiles = <Map<String, String>>[];
+    final failedFiles = <String>[];
+
+    try {
+      for (final item in videoItems) {
+        try {
+          final ext = item.fileName.split('.').last.toLowerCase();
+          final mimeType = ext == 'mov' ? 'video/quicktime' : 'video/mp4';
+
+          final url = await uploadSasUseCase(
+            filePath: item.path,
+            fileName: item.fileName,
+            contentType: mimeType,
+            onProgress: (sent, total) {
+              if (total > 0) {
+                final ratio = (sent / total).clamp(0.01, 0.99);
+                ref
+                    .read(mediaUploadProgressProvider.notifier)
+                    .setItemProgress(roomId, item.fileName, ratio);
+              }
+            },
+          );
+
+          ref
+              .read(mediaUploadProgressProvider.notifier)
+              .setItemProgress(roomId, item.fileName, 1.0);
+
+          final file = File(item.path);
+          final fileSize = file.existsSync() ? await file.length() : 0;
+
+          uploadedFiles.add({
+            'url': url,
+            'fileName': item.fileName,
+            'mimeType': mimeType,
+            'fileSize': fileSize.toString(),
+          });
+        } catch (e, st) {
+          developer.log('Upload video failed for ${item.fileName}',
+              error: e, stackTrace: st);
+          failedFiles.add(item.fileName);
+        }
+      }
+
+      for (final item in uploadedFiles) {
+        final metaData = <String, dynamic>{
+          'type': 'video',
+          'url': item['url'] ?? '',
+          'fileName': item['fileName'] ?? '',
+          'mimeType': item['mimeType'] ?? 'video/mp4',
+          'fileSize': item['fileSize'] ?? '0',
+        };
+        await sendMessage('[Video]', metaData: metaData);
+      }
+
+      _reportUploadFailures(failedFiles, videoItems.length);
+    } finally {
+      ref
+          .read(mediaUploadProgressProvider.notifier)
+          .setRoomProgress(roomId, null);
     }
+  }
+
+  /// Báo cho UI (toast) danh sách tệp upload thất bại để người dùng biết
+  /// vì sao "có file gửi được, có file không".
+  void _reportUploadFailures(List<String> failedFiles, int totalCount) {
+    if (failedFiles.isEmpty || !ref.mounted) return;
+    final names = failedFiles.take(3).join(', ');
+    final suffix = failedFiles.length > 3 ? '…' : '';
+    final message = failedFiles.length == totalCount
+        ? 'Không thể tải lên ${failedFiles.length} tệp: $names$suffix'
+        : '${failedFiles.length}/$totalCount tệp tải lên thất bại: $names$suffix';
+    ref.read(mediaUploadErrorProvider.notifier).setError(roomId, message);
   }
 
   void updateMessagePin(String messageId, bool pin) {
@@ -715,9 +1463,9 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
     final trimmed = newContent.trim();
     if (trimmed.isEmpty) return false;
 
-    final oldContent =
-        state.where((m) => m.id == messageId).firstOrNull?.content;
-    if (oldContent == trimmed) return true;
+    final targetMsg = state.where((m) => m.id == messageId).firstOrNull;
+    final oldContent = targetMsg?.content;
+    final existingMetadata = targetMsg?.metadata;
 
     state = state
         .map((m) => m.id == messageId ? m.copyWith(content: trimmed) : m)
@@ -729,6 +1477,7 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         threadId: threadId,
         messageId: messageId,
         content: trimmed,
+        metadata: existingMetadata,
       );
       if (!ok && ref.mounted) {
         _revertMessageContent(messageId, oldContent);
@@ -798,13 +1547,17 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
   }
 
   /// Tự động load thêm tin nhắn cũ hơn cho đến khi chứa tin nhắn có [messageId].
-  /// Trả về true nếu tìm thấy, false nếu không tìm thấy (hoặc hết lịch sử).
+  /// Trả về true nếu tìm thấy, false nếu không tìm thấy (hoặc hết lịch sử/quá giới hạn).
   Future<bool> loadUntilMessage({required String messageId}) async {
     if (state.any((m) => m.id == messageId)) {
       return true;
     }
 
-    while (true) {
+    int attempts = 0;
+    const maxAttempts = 20;
+    final timeout = DateTime.now().add(const Duration(seconds: 10));
+
+    while (attempts < maxAttempts && DateTime.now().isBefore(timeout)) {
       if (_cursor == null) {
         break;
       }
@@ -814,6 +1567,7 @@ class ThreadMessagesNotifier extends Notifier<List<Message>> {
         continue;
       }
 
+      attempts++;
       await loadOlder();
 
       if (state.any((m) => m.id == messageId)) {

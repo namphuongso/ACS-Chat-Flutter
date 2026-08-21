@@ -34,6 +34,16 @@ class _ConversationListState extends ConsumerState<ConversationList>
   final _searchController = TextEditingController();
   String _keyword = '';
 
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() {
+      if (mounted) {
+        ref.read(globalCurrentUserIdProvider.notifier).setUserId(widget.currentUserId);
+      }
+    });
+  }
+
   /// Tên hiển thị của room dùng cho tìm kiếm: direct → tên người kia,
   /// group → roomName (fallback tên participant).
   String _roomTitle(Conversation conversation) {
@@ -238,27 +248,53 @@ class _ConversationListState extends ConsumerState<ConversationList>
                                           ? other?.avatarUrl
                                           : null));
 
+                              final isUnread = conversation.unreadCount > 0;
+                              final config = ref.watch(chatUiConfigProvider);
+                              final primaryColor = config.primaryActionColor ??
+                                  config.iconColor ??
+                                  Theme.of(context).primaryColor;
+
                               return ListTile(
                                 key: ValueKey(conversation.id),
                                 leading: CircleAvatar(
+                                  backgroundColor: const Color(0xFFF0F2F5),
                                   backgroundImage: avatarUrl != null
                                       ? NetworkImage(avatarUrl)
                                       : null,
                                   child: avatarUrl == null
-                                      ? Text(title.isNotEmpty
-                                          ? title[0].toUpperCase()
-                                          : '?')
+                                      ? Text(
+                                          title.isNotEmpty
+                                              ? title[0].toUpperCase()
+                                              : '?',
+                                          style: const TextStyle(
+                                            color: Colors.black87,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        )
                                       : null,
                                 ),
                                 title: Text(
                                   title,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: isUnread
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
                                 ),
                                 subtitle: Text(
                                   LastMessagePreview.format(conversation),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: isUnread
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                                    color: isUnread
+                                        ? Colors.black87
+                                        : Colors.grey.shade600,
+                                  ),
                                 ),
                                 trailing: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
@@ -271,9 +307,14 @@ class _ConversationListState extends ConsumerState<ConversationList>
                                               conversation
                                                   .lastMessage!.createdAt)
                                           : '',
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         fontSize: 11,
-                                        color: Colors.grey,
+                                        color: isUnread
+                                            ? primaryColor
+                                            : Colors.grey,
+                                        fontWeight: isUnread
+                                            ? FontWeight.bold
+                                            : FontWeight.normal,
                                       ),
                                     ),
                                     const SizedBox(height: 4),
@@ -286,12 +327,42 @@ class _ConversationListState extends ConsumerState<ConversationList>
                                             size: 14,
                                             color: Colors.grey,
                                           ),
+                                        if (isUnread) ...[
+                                          if (conversation.pin)
+                                            const SizedBox(width: 4),
+                                          Container(
+                                            padding:
+                                                const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: primaryColor,
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                            ),
+                                            child: Text(
+                                              '${conversation.unreadCount}',
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
                                       ],
                                     ),
                                   ],
                                 ),
-                                onTap: () =>
-                                    widget.onTapConversation(conversation),
+                                onTap: () {
+                                  ref
+                                      .read(
+                                          conversationListProvider
+                                              .notifier)
+                                      .markAsRead(conversation.id);
+                                  widget.onTapConversation(conversation);
+                                },
                                 onLongPress: () =>
                                     _showConversationMenu(conversation),
                               );

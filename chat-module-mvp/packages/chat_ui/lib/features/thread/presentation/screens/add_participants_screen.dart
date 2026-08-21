@@ -195,6 +195,7 @@ class _AddParticipantsScreenState extends ConsumerState<AddParticipantsScreen> {
                                 children: [
                                   CircleAvatar(
                                     radius: 24,
+                                    backgroundColor: const Color(0xFFF0F2F5),
                                     backgroundImage: hasAvatar
                                         ? NetworkImage(user.avatarUrl!)
                                         : null,
@@ -207,6 +208,7 @@ class _AddParticipantsScreenState extends ConsumerState<AddParticipantsScreen> {
                                             style: const TextStyle(
                                               fontWeight: FontWeight.bold,
                                               fontSize: 18,
+                                              color: Colors.black87,
                                             ),
                                           )
                                         : null,
@@ -296,12 +298,19 @@ class _AddParticipantsScreenState extends ConsumerState<AddParticipantsScreen> {
                               children: [
                                 CircleAvatar(
                                   radius: 22,
+                                  backgroundColor: const Color(0xFFF0F2F5),
                                   backgroundImage:
                                       hasAv ? NetworkImage(u.avatarUrl!) : null,
                                   child: !hasAv
-                                      ? Text(u.displayName.isNotEmpty
-                                          ? u.displayName[0].toUpperCase()
-                                          : '?')
+                                      ? Text(
+                                          u.displayName.isNotEmpty
+                                              ? u.displayName[0].toUpperCase()
+                                              : '?',
+                                          style: const TextStyle(
+                                            color: Colors.black87,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        )
                                       : null,
                                 ),
                                 Positioned(

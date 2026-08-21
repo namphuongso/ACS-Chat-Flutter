@@ -224,6 +224,25 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
   }
 
   @override
+  Future<bool> setRoleAdmin({
+    required String roomId,
+    required String userId,
+    required bool admin,
+  }) async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final data = await _api.post(
+      ChatApiEndpoints.setRoleAdmin,
+      appToken: appToken,
+      query: {
+        'roomId': roomId,
+        'userId': userId,
+        'admin': admin.toString(),
+      },
+    );
+    return data == true;
+  }
+
+  @override
   Future<bool> leaveRoom({
     required String roomId,
     String? newAdminUserId,
@@ -236,6 +255,16 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
         if (newAdminUserId != null && newAdminUserId.isNotEmpty)
           'newAdminUserId': newAdminUserId,
       },
+    );
+    return data == true;
+  }
+
+  @override
+  Future<bool> closeRoom({required String roomId}) async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final data = await _api.post(
+      ChatApiEndpoints.closeRoom(roomId),
+      appToken: appToken,
     );
     return data == true;
   }
@@ -273,7 +302,6 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
     final appToken = await _appTokenProvider.getAppToken();
     final file = File(filePath);
     final fileSize = await file.length();
-    final fileBytes = await file.readAsBytes();
     final mimeType = contentType ?? _lookupMimeType(fileName);
 
     final jsonHeaders = {
@@ -337,9 +365,12 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
       );
     }
 
-    // 2. PUT file bytes to Azure Blob sasUrl with progress tracking
+    // 2. PUT file bytes to Azure Blob sasUrl with progress tracking.
+    // Stream file từ đĩa thay vì đọc cả file vào RAM (tránh OOM với file
+    // lớn). Timeout giãn theo dung lượng file — trước đó timeout cứng 60s
+    // khiến file lớn upload trên mạng chậm bị fail giữa chừng.
     final putUri = Uri.parse(sasUrl);
-    final totalBytes = fileBytes.length;
+    final totalBytes = fileSize;
     onProgress?.call(0, totalBytes);
 
     final putRequest = http.StreamedRequest('PUT', putUri);
@@ -349,15 +380,14 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
       'Content-Length': '$totalBytes',
     });
 
+    // ~512KB/s + 60s baseline, tối đa 10 phút.
+    final putTimeoutSeconds =
+        (60 + totalBytes ~/ (512 * 1024)).clamp(60, 600);
     final responseFuture =
-        putRequest.send().timeout(const Duration(seconds: 60));
+        putRequest.send().timeout(Duration(seconds: putTimeoutSeconds));
 
     int bytesSent = 0;
-    const chunkSize = 64 * 1024;
-    for (int offset = 0; offset < totalBytes; offset += chunkSize) {
-      final end =
-          (offset + chunkSize > totalBytes) ? totalBytes : offset + chunkSize;
-      final chunk = fileBytes.sublist(offset, end);
+    await for (final chunk in file.openRead()) {
       putRequest.sink.add(chunk);
       bytesSent += chunk.length;
       onProgress?.call(bytesSent, totalBytes);

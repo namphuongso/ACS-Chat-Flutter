@@ -8,6 +8,7 @@ class ChatMemberModel extends ChatMember {
     super.acsUserId,
     super.email,
     super.isAdmin,
+    super.isOwner,
   });
 
   factory ChatMemberModel.fromJson(Map<String, dynamic> json) {
@@ -17,10 +18,14 @@ class ChatMemberModel extends ChatMember {
           (json['fullName'] as String?) ??
           (json['contactName'] as String?) ??
           '',
-      avatarUrl: json['avatarUrl'] as String?,
+      avatarUrl: (json['avatarUrl'] as String?) ??
+          (json['avatar'] as String?) ??
+          (json['photoUrl'] as String?) ??
+          (json['pictureUrl'] as String?),
       acsUserId: (json['acsUserId'] as String?) ?? (json['cui'] as String?),
       email: json['email'] as String?,
       isAdmin: json['isAdmin'] as bool? ?? false,
+      isOwner: json['isOwner'] as bool? ?? false,
     );
   }
 }

@@ -194,6 +194,23 @@ class ConversationRepositoryImpl implements ConversationRepository {
   }
 
   @override
+  Future<bool> setRoleAdmin({
+    required String roomId,
+    required String userId,
+    required bool admin,
+  }) async {
+    final result = await _dataSource.setRoleAdmin(
+      roomId: roomId,
+      userId: userId,
+      admin: admin,
+    );
+    if (result) {
+      await _syncConversationMembers(roomId);
+    }
+    return result;
+  }
+
+  @override
   Future<bool> leaveRoom({
     required String roomId,
     String? newAdminUserId,
@@ -202,6 +219,20 @@ class ConversationRepositoryImpl implements ConversationRepository {
       roomId: roomId,
       newAdminUserId: newAdminUserId,
     );
+    final local = _local;
+    if (local != null && result) {
+      try {
+        final cached = await local.getCachedConversations();
+        final updated = cached.where((c) => c.id != roomId).toList();
+        await local.saveConversations(updated);
+      } catch (_) {}
+    }
+    return result;
+  }
+
+  @override
+  Future<bool> closeRoom({required String roomId}) async {
+    final result = await _dataSource.closeRoom(roomId: roomId);
     final local = _local;
     if (local != null && result) {
       try {

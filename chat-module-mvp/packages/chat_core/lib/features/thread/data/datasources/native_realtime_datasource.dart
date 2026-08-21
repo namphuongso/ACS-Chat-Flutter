@@ -14,5 +14,13 @@ abstract class NativeRealtimeDataSource {
 
   Future<void> stopWatchingList();
 
+  void sendReadMessage(String lastVisibleMessageId);
+
+  void clearReadMessageState();
+
+  void leaveActiveRoom();
+
+  void resetSession();
+
   Future<void> dispose();
 }

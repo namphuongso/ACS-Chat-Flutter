@@ -37,10 +37,21 @@ abstract class ConversationRepository {
     required String toUserId,
   });
 
+  Future<bool> setRoleAdmin({
+    required String roomId,
+    required String userId,
+    required bool admin,
+  });
+
   Future<bool> leaveRoom({
     required String roomId,
     String? newAdminUserId,
   });
+
+  /// Đóng (khóa) room — giải tán nhóm (API docs mục 23, `close-room`).
+  /// Sau khi gọi thành công, BE gửi event `RoomDisbanded` qua realtime
+  /// để các thành viên khác cập nhật UI.
+  Future<bool> closeRoom({required String roomId});
 
   Future<String> uploadRoomAvatar({
     required String filePath,

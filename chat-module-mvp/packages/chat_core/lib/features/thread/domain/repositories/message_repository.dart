@@ -1,6 +1,8 @@
 import '../../../conversation_list/domain/entities/conversation.dart';
 import '../entities/message.dart';
 import '../entities/pinned_message.dart';
+import '../entities/message_reader.dart';
+import '../entities/message_resource.dart';
 import '../entities/message_reaction.dart';
 
 abstract class MessageRepository {
@@ -20,6 +22,7 @@ abstract class MessageRepository {
     required String threadId,
     required String messageId,
     required String content,
+    Map<String, dynamic>? metadata,
   });
 
   /// Xoá tin nhắn — đi qua BE (`POST /chat/delete-message`). ACS soft-delete
@@ -53,6 +56,20 @@ abstract class MessageRepository {
   /// Danh sách tin đang ghim của room — BE. Mọi user trong room cùng nhìn
   /// thấy tin ghim (ACS không mang thông tin này).
   Future<List<PinnedMessage>> getPinnedMessages(String roomId);
+
+  Future<List<MessageReader>> getMessageReaders({
+    required String roomId,
+    required String messageId,
+    bool? read,
+  });
+
+  Future<PaginatedResult<MessageResource>> getMessageResources({
+    required String roomId,
+    required MessageResourceType resourceType,
+    int pageIndex = 1,
+    int pageSize = 50,
+    String? keyword,
+  });
 
   Future<List<ReactionConfig>> getReactionConfigs();
 
@@ -91,4 +108,13 @@ abstract class MessageRepository {
 
   /// Dừng realtime cho danh sách hội thoại.
   Future<void> stopWatchingList();
+
+  /// Gửi WebSocket `read` payload với lastVisibleMessageId theo giao thức backend.
+  void sendReadMessage(String lastVisibleMessageId);
+
+  /// Xoá trạng thái lastVisibleMessageId để không gửi nhầm read khi ở ngoài room hoặc background.
+  void clearReadMessageState();
+
+  /// Gửi sự kiện leave_room WebSocket khi người dùng chuyển sang màn hình chi tiết, sang tab khác hoặc background.
+  void leaveActiveRoom();
 }

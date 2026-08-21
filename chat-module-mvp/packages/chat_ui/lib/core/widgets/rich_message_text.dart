@@ -1,6 +1,8 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
+import 'package:url_launcher/url_launcher.dart';
 
 class _Seg {
   const _Seg(this.text, this.style);
@@ -19,6 +21,7 @@ class RichMessageText extends StatelessWidget {
   final TextStyle style;
 
   static final _tagRegex = RegExp(r'<[a-zA-Z][^>]*>');
+  static final _urlRegex = RegExp(r'(https?://[^\s<]+)');
 
   static const _fontSizes = <int, double>{
     1: 11,
@@ -34,7 +37,7 @@ class RichMessageText extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = _maybeUnescape(content);
     if (!_tagRegex.hasMatch(text)) {
-      return Text(text, style: style);
+      return _buildPlainTextWithLinks(text, style);
     }
 
     final doc = html_parser.parse(text);
@@ -518,5 +521,54 @@ class RichMessageText extends StatelessWidget {
         .replaceAll('&#39;', "'")
         .replaceAll('&nbsp;', '\u00a0')
         .replaceAll('&amp;', '&');
+  }
+
+  Widget _buildPlainTextWithLinks(String text, TextStyle baseStyle) {
+    final matches = _urlRegex.allMatches(text);
+    if (matches.isEmpty) {
+      return Text(text, style: baseStyle);
+    }
+
+    final spans = <InlineSpan>[];
+    var lastMatchEnd = 0;
+
+    for (final match in matches) {
+      if (match.start > lastMatchEnd) {
+        spans.add(TextSpan(
+          text: text.substring(lastMatchEnd, match.start),
+          style: baseStyle,
+        ));
+      }
+
+      final urlText = match.group(0)!;
+      final recognizer = TapGestureRecognizer()
+        ..onTap = () async {
+          final uri = Uri.tryParse(urlText);
+          if (uri != null && await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
+        };
+
+      spans.add(TextSpan(
+        text: urlText,
+        style: baseStyle.copyWith(
+          color: Colors.blue,
+          decoration: TextDecoration.underline,
+          decorationColor: Colors.blue,
+        ),
+        recognizer: recognizer,
+      ));
+
+      lastMatchEnd = match.end;
+    }
+
+    if (lastMatchEnd < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(lastMatchEnd),
+        style: baseStyle,
+      ));
+    }
+
+    return Text.rich(TextSpan(children: spans), style: baseStyle);
   }
 }

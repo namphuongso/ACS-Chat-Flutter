@@ -3,6 +3,17 @@ import 'package:test/test.dart';
 
 class _MockConversationRemote implements ConversationRemoteDataSource {
   @override
+  Future<bool> closeRoom({required String roomId}) async => true;
+
+  @override
+  Future<bool> setRoleAdmin({
+    required String roomId,
+    required String userId,
+    required bool admin,
+  }) async =>
+      true;
+
+  @override
   Future<String> uploadRoomAvatar({
     required String filePath,
     required String filename,

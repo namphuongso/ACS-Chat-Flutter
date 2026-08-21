@@ -12,6 +12,9 @@ import '../../domain/entities/message.dart';
 import '../../domain/entities/message_reaction.dart';
 import '../models/message_model.dart';
 import '../models/pinned_message_model.dart';
+import '../models/message_reader_model.dart';
+import '../models/message_resource_model.dart';
+import '../../domain/entities/message_resource.dart';
 import 'message_remote_datasource.dart';
 import 'polling_engine.dart';
 
@@ -126,8 +129,63 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     final data = json['data'] as Map<String, dynamic>? ?? const {};
-    final rawMessages = (data['messages'] as List? ?? const [])
+    final rawItems = (data['items'] as List? ?? data['messages'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+
+    for (var i = 0; i < rawItems.length; i++) {
+      final item = rawItems[i];
+      final itemType = item['itemType']?.toString();
+      final itemData = (itemType != null && item['data'] is Map)
+          ? Map<String, dynamic>.from(item['data'] as Map)
+          : item;
+      final eventType = itemData['eventType']?.toString();
+
+      if (eventType == 'RoomUpdated') {
+        final payload = (itemData['payload'] is Map)
+            ? Map<String, dynamic>.from(itemData['payload'] as Map)
+            : <String, dynamic>{};
+        final roomName = (payload['roomName'] ?? itemData['roomName'] ?? '').toString().trim();
+        final avatarUrl = (payload['avatarUrl'] ?? itemData['avatarUrl'] ?? '').toString().trim();
+
+        Map<String, dynamic>? prevPayload;
+        for (var j = i + 1; j < rawItems.length; j++) {
+          final nextItem = rawItems[j];
+          final nextItemType = nextItem['itemType']?.toString();
+          final nextData = (nextItemType != null && nextItem['data'] is Map)
+              ? (nextItem['data'] as Map).cast<String, dynamic>()
+              : nextItem;
+          if (nextData['eventType']?.toString() == 'RoomUpdated') {
+            prevPayload = (nextData['payload'] is Map)
+                ? (nextData['payload'] as Map).cast<String, dynamic>()
+                : <String, dynamic>{};
+            break;
+          }
+        }
+
+        if (prevPayload != null) {
+          final prevRoomName = (prevPayload['roomName'] ?? '').toString().trim();
+          final prevAvatarUrl = (prevPayload['avatarUrl'] ?? '').toString().trim();
+          final nameChanged = roomName.isNotEmpty && prevRoomName.isNotEmpty && roomName != prevRoomName;
+          final avatarChanged = avatarUrl.isNotEmpty && avatarUrl != prevAvatarUrl;
+
+          if (nameChanged) payload['isNameChanged'] = true;
+          if (avatarChanged) payload['isAvatarChanged'] = true;
+        } else {
+          if (avatarUrl.isNotEmpty) payload['isAvatarChanged'] = true;
+        }
+
+        itemData['payload'] = payload;
+        if (itemType != null && item['data'] is Map) {
+          item['data'] = itemData;
+        } else {
+          item.addAll(itemData);
+        }
+      }
+    }
+
+    final rawMessages = rawItems
         .map((e) => MessageModel.fromAcsJson(e, threadId: threadId))
         .toList();
     final continuationToken = data['continuationToken']?.toString();
@@ -147,6 +205,7 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     required String roomId,
     required String messageId,
     required String content,
+    Map<String, dynamic>? metadata,
   }) async {
     final appToken = await _appTokenProvider.getAppToken();
     final uri =
@@ -155,7 +214,7 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       'roomId': roomId,
       'messageId': messageId,
       'content': content,
-      'metaData': {},
+      'metaData': metadata ?? {},
     });
 
     ChatLogger.logRequest('POST (update message)', uri, body: {'roomId': roomId, 'messageId': messageId, 'content': content});
@@ -275,6 +334,123 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         .whereType<Map<String, dynamic>>()
         .map(PinnedMessageModel.fromJson)
         .toList();
+  }
+
+  @override
+  Future<List<MessageReaderModel>> getMessageReaders({
+    required String roomId,
+    required String messageId,
+    bool? read,
+  }) async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final queryParams = <String, String>{
+      'roomId': roomId,
+      'messageId': messageId,
+    };
+    if (read != null) {
+      queryParams['read'] = '$read';
+    }
+
+    final uri = Uri.parse(
+      '${_config.backendBaseUrl}${ChatApiEndpoints.getReader}',
+    ).replace(queryParameters: queryParams);
+
+    ChatLogger.logRequest('GET (get-reader)', uri);
+
+    final response = await _http
+        .get(uri, headers: _headers(appToken))
+        .timeout(const Duration(seconds: 15));
+
+    ChatLogger.logResponse(
+      'GET (get-reader)',
+      uri,
+      response.statusCode,
+      response.body,
+    );
+
+    if (response.statusCode != 200) {
+      throw ChatApiException(
+        statusCode: response.statusCode,
+        code: 'GET_READER_FAILED',
+        message: response.body,
+      );
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final data = json['data'];
+    if (data is! List) return const [];
+    return data
+        .whereType<Map<String, dynamic>>()
+        .map(MessageReaderModel.fromJson)
+        .toList();
+  }
+
+  @override
+  Future<PaginatedResult<MessageResourceModel>> getMessageResources({
+    required String roomId,
+    required MessageResourceType resourceType,
+    int pageIndex = 1,
+    int pageSize = 50,
+    String? keyword,
+  }) async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final queryParams = <String, String>{
+      'roomId': roomId,
+      'resourceType': resourceType.value,
+      'pageIndex': '$pageIndex',
+      'pageSize': '$pageSize',
+    };
+    if (keyword != null && keyword.trim().isNotEmpty) {
+      queryParams['keyword'] = keyword.trim();
+    }
+
+    final uri = Uri.parse(
+      '${_config.backendBaseUrl}${ChatApiEndpoints.getMessageResources}',
+    ).replace(queryParameters: queryParams);
+
+    ChatLogger.logRequest('GET (get-message-resources)', uri);
+
+    final response = await _http
+        .get(uri, headers: _headers(appToken))
+        .timeout(const Duration(seconds: 15));
+
+    ChatLogger.logResponse(
+      'GET (get-message-resources)',
+      uri,
+      response.statusCode,
+      response.body,
+    );
+
+    if (response.statusCode != 200) {
+      throw ChatApiException(
+        statusCode: response.statusCode,
+        code: 'GET_RESOURCES_FAILED',
+        message: response.body,
+      );
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final data = json['data'];
+    final totalRecord = (json['totalRecord'] as num?)?.toInt() ?? 0;
+    if (data is! List) {
+      return const PaginatedResult<MessageResourceModel>(
+        items: [],
+        hasMore: false,
+      );
+    }
+
+    final items = data
+        .whereType<Map<String, dynamic>>()
+        .map((item) => MessageResourceModel.fromJson(item, resourceType))
+        .toList();
+
+    final hasMore = (pageIndex * pageSize) < totalRecord;
+
+    return PaginatedResult<MessageResourceModel>(
+      items: items,
+      hasMore: hasMore,
+      cursor: hasMore ? '${pageIndex + 1}' : null,
+    );
   }
 
   @override

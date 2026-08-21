@@ -44,11 +44,12 @@ class ContactListState {
 }
 
 class ContactListNotifier extends Notifier<ContactListState> {
-  late final SearchContactsUseCase _searchContactsUseCase;
+  SearchContactsUseCase get _searchContactsUseCase =>
+      ref.read(searchContactsUseCaseProvider);
 
   @override
   ContactListState build() {
-    _searchContactsUseCase = ref.watch(searchContactsUseCaseProvider);
+    ref.watch(searchContactsUseCaseProvider);
     Future.microtask(() => loadContacts());
     return const ContactListState();
   }
