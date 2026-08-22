@@ -168,8 +168,8 @@ class _ChatVideoPlayerDialogState extends State<ChatVideoPlayerDialog> {
                       Text(
                         _errorMessage!,
                         textAlign: TextAlign.center,
-                        style:
-                            const TextStyle(color: Colors.white70, fontSize: 13),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 13),
                       ),
                     ],
                   ),

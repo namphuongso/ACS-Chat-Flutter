@@ -122,7 +122,7 @@ class _MockRealtime implements NativeRealtimeDataSource {
       const Stream.empty();
 
   @override
-  Stream<MessageModel> watchListMessages(String roomId) =>
+  Stream<MessageModel> watchListMessages() =>
       const Stream.empty();
 
   @override
@@ -132,7 +132,7 @@ class _MockRealtime implements NativeRealtimeDataSource {
   Future<void> stopWatchingList() async {}
 
   @override
-  void sendReadMessage(String lastVisibleMessageId) {}
+  void sendReadMessage(String lastVisibleMessageId, {String? roomId}) {}
 
   @override
   void clearReadMessageState() {}

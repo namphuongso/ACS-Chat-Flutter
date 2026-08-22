@@ -60,7 +60,6 @@ final messageRepositoryProvider = Provider<MessageRepository>((ref) {
   );
   final realtime = NativeRealtimeDataSourceImpl(
     config: config,
-    authTokenRepository: authTokenRepo,
     appTokenProvider: appTokenProvider,
   );
   final repo = MessageRepositoryImpl(

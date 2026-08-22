@@ -66,8 +66,9 @@ class _LinkPreviewCardState extends State<LinkPreviewCard> {
         (Uri.tryParse(widget.url)?.host ?? widget.url);
     final description = _data?.description ?? widget.description;
     final imageUrl = _data?.imageUrl ?? widget.imageUrl;
-    final domain =
-        _data?.domain ?? widget.domain ?? (Uri.tryParse(widget.url)?.host ?? '');
+    final domain = _data?.domain ??
+        widget.domain ??
+        (Uri.tryParse(widget.url)?.host ?? '');
 
     return GestureDetector(
       onTap: () async {

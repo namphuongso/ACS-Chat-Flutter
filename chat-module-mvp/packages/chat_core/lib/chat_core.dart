@@ -24,6 +24,7 @@ export 'features/thread/domain/entities/message_resource.dart';
 export 'features/thread/data/models/message_resource_model.dart';
 export 'features/thread/domain/entities/message_reaction.dart';
 export 'features/thread/domain/repositories/message_repository.dart';
+export 'features/thread/domain/services/system_message_text.dart';
 
 // Use Cases
 export 'features/auth_token/domain/usecases/get_access_token_usecase.dart';

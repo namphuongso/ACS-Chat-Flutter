@@ -22,9 +22,9 @@ class UploadProgressBanner extends ConsumerWidget {
 
     final totalCount = items.length;
     final completedCount = items.where((i) => i.progress >= 1.0).length;
-    final totalProgress =
-        items.fold<double>(0.0, (sum, i) => sum + i.progress);
-    final overallPercent = ((totalProgress / totalCount) * 100).toInt().clamp(0, 100);
+    final totalProgress = items.fold<double>(0.0, (sum, i) => sum + i.progress);
+    final overallPercent =
+        ((totalProgress / totalCount) * 100).toInt().clamp(0, 100);
 
     final config = ref.watch(chatUiConfigProvider);
     final theme = Theme.of(context);

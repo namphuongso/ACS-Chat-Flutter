@@ -49,8 +49,7 @@ class _RoomResourcesCategoryScreenState
   @override
   Widget build(BuildContext context) {
     final uiConfig = ref.watch(chatUiConfigProvider);
-    final appBarBg =
-        uiConfig.appBarBackgroundColor ?? const Color(0xFF0787E8);
+    final appBarBg = uiConfig.appBarBackgroundColor ?? const Color(0xFF0787E8);
     final isDarkBg =
         ThemeData.estimateBrightnessForColor(appBarBg) == Brightness.dark;
     final titleTextColor =

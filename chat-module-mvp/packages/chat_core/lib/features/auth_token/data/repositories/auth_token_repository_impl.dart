@@ -1,5 +1,5 @@
-import 'dart:developer' as developer;
-
+import '../../../../core/error/chat_api_exception.dart';
+import '../../../../core/utils/chat_logger.dart';
 import '../../domain/entities/chat_access_token.dart';
 import '../../domain/repositories/auth_token_repository.dart';
 import '../datasources/auth_token_remote_datasource.dart';
@@ -18,13 +18,9 @@ class AuthTokenRepositoryImpl implements AuthTokenRepository {
     if (cached != null && !cached.needsRefresh) {
       return Future.value(cached);
     }
-    // LƯU Ý: callback phải là block body (trả void). Trước đây
-    // `whenComplete(() => _inFlight.remove(roomId))` trả về CHÍNH cái future
-    // đang được hoàn thành (self-reference) → future kẹt vĩnh viễn, join-room
-    // trả 200 nhưng không ai nhận được token → myAcsUserId mãi null, tin nhắn
-    // render sai phía / loading 20s mới báo lỗi, back ra vô lại mới đúng.
-    return _inFlight[roomId] ??= _refresh(roomId)
-        .whenComplete(() { _inFlight.remove(roomId); });
+    return _inFlight[roomId] ??= _refresh(roomId).whenComplete(() {
+      _inFlight.remove(roomId);
+    });
   }
 
   @override
@@ -67,8 +63,13 @@ class AuthTokenRepositoryImpl implements AuthTokenRepository {
         _cached[roomId] = token;
         return token;
       } catch (e) {
-        developer.log('join-room attempt failed (roomId=$roomId)',
-            name: 'ChatModule', error: e);
+        ChatLogger.error('join-room attempt failed (roomId=$roomId)', error: e);
+        if (e is ChatApiException &&
+            (e.statusCode == 401 ||
+                e.statusCode == 403 ||
+                e.statusCode == 404)) {
+          rethrow;
+        }
         retries--;
         if (retries <= 0) {
           rethrow;

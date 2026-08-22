@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import '../../domain/entities/message.dart';
+import '../../domain/services/system_message_text.dart';
 
 class MessageModel extends Message {
   const MessageModel({
@@ -19,13 +20,14 @@ class MessageModel extends Message {
 
   factory MessageModel.fromAcsJson(Map<String, dynamic> rawJson,
       {required String threadId}) {
-    final itemType = rawJson['itemType']?.toString();
+    final itemType = rawJson['itemType']?.toString().toLowerCase();
     final json = (itemType != null && rawJson['data'] is Map)
         ? (rawJson['data'] as Map).cast<String, dynamic>()
         : rawJson;
 
-    if (itemType == 'event' || json.containsKey('eventType')) {
-      final eventType = json['eventType']?.toString() ?? '';
+    final rawEventType = json['eventType'] ?? json['EventType'] ?? json['event_type'];
+    if (itemType == 'event' || rawEventType != null) {
+      final eventType = (rawEventType ?? '').toString();
       final payload = (json['payload'] is Map)
           ? (json['payload'] as Map).cast<String, dynamic>()
           : <String, dynamic>{};
@@ -35,7 +37,9 @@ class MessageModel extends Message {
               json['senderDisplayName'] ??
               json['createdByName'] ??
               json['updatedByName'] ??
-              (json['actor'] is Map ? (json['actor']['displayName'] ?? json['actor']['userName']) : null) ??
+              (json['actor'] is Map
+                  ? (json['actor']['displayName'] ?? json['actor']['userName'])
+                  : null) ??
               payload['actorName'] ??
               payload['actorDisplayName'] ??
               payload['changedByName'] ??
@@ -43,199 +47,43 @@ class MessageModel extends Message {
               payload['removedByName'] ??
               payload['updatedByName'] ??
               payload['fromUserName'] ??
-              (payload['actor'] is Map ? (payload['actor']['displayName'] ?? payload['actor']['userName']) : null) ??
+              (payload['actor'] is Map
+                  ? (payload['actor']['displayName'] ??
+                      payload['actor']['userName'])
+                  : null) ??
               '')
           .toString()
           .trim();
 
-      final String content;
-      if (eventType == 'RoomOwnershipTransferred') {
-        final toUserName = (payload['toUserName'] ??
-                payload['targetName'] ??
-                payload['targetDisplayName'] ??
-                payload['newOwnerName'] ??
-                (payload['targetUser'] is Map ? (payload['targetUser']['displayName'] ?? payload['targetUser']['userName']) : null) ??
-                '')
-            .toString()
-            .trim();
-        if (actorName.isNotEmpty && toUserName.isNotEmpty) {
-          content = '**$actorName** đã chuyển quyền Trưởng phòng cho **$toUserName**';
-        } else if (toUserName.isNotEmpty) {
-          content = '**$toUserName** đã trở thành Trưởng phòng mới';
-        } else if (actorName.isNotEmpty) {
-          content = '**$actorName** đã chuyển quyền Trưởng phòng';
-        } else {
-          content = 'Quyền Trưởng phòng đã được chuyển giao';
-        }
-      } else if (eventType == 'RoomRoleChanged') {
-        final userName = (payload['userName'] ??
-                payload['targetName'] ??
-                payload['targetDisplayName'] ??
-                payload['memberName'] ??
-                payload['memberUserName'] ??
-                payload['userDisplayName'] ??
-                payload['toUserName'] ??
-                '')
-            .toString()
-            .trim();
-        final rawActorName = (json['actorName'] ??
-                json['actorDisplayName'] ??
-                payload['actorName'] ??
-                payload['changedByName'] ??
-                payload['actorDisplayName'] ??
-                payload['fromUserName'] ??
-                '')
-            .toString()
-            .trim();
-        final isAdmin = payload['isAdmin'] == true ||
-            payload['role']?.toString().toLowerCase() == 'admin' ||
-            payload['newRole']?.toString().toLowerCase() == 'admin';
-
-        final actor = rawActorName.isNotEmpty ? rawActorName : actorName;
-
-        if (actor.isNotEmpty && userName.isNotEmpty) {
-          content = isAdmin
-              ? '**$actor** đã phong **$userName** làm Admin'
-              : '**$actor** đã gỡ quyền Admin của **$userName**';
-        } else if (userName.isNotEmpty) {
-          content = isAdmin
-              ? '**$userName** đã được phong làm Admin'
-              : '**$userName** đã bị gỡ quyền Admin';
-        } else if (actor.isNotEmpty) {
-          content = isAdmin
-              ? '**$actor** đã thêm Admin mới'
-              : '**$actor** đã gỡ quyền Admin';
-        } else {
-          content = 'Quyền Admin trong phòng đã thay đổi';
-        }
-      } else if (eventType == 'MemberRemoved') {
-        final removedUserName = (payload['removedUserName'] ??
-                payload['removedUserDisplayName'] ??
-                payload['targetName'] ??
-                payload['targetDisplayName'] ??
-                payload['userName'] ??
-                (payload['removedUser'] is Map ? (payload['removedUser']['displayName'] ?? payload['removedUser']['userName']) : null) ??
-                json['removedUserName'] ??
-                json['targetName'] ??
-                '')
-            .toString()
-            .trim();
-        if (actorName.isNotEmpty && removedUserName.isNotEmpty) {
-          content = '**$actorName** đã xóa **$removedUserName** khỏi nhóm';
-        } else if (removedUserName.isNotEmpty) {
-          content = '**$removedUserName** đã bị xóa khỏi nhóm';
-        } else if (actorName.isNotEmpty) {
-          content = '**$actorName** đã xóa một thành viên khỏi nhóm';
-        } else {
-          content = 'Một thành viên đã bị xóa khỏi nhóm';
-        }
-      } else if (eventType == 'MemberJoined') {
-        final addedUsers = payload['addedUsers'] as List? ?? json['addedUsers'] as List? ?? const [];
-        final addedNames = addedUsers
-            .map((u) => u is Map ? (u['displayName'] ?? u['userName'] ?? u['userDisplayName'])?.toString().trim() : u.toString().trim())
-            .where((n) => n != null && n.isNotEmpty)
-            .cast<String>()
-            .join(', ');
-        final targetNames = addedNames.isNotEmpty
-            ? addedNames
-            : (payload['targetName'] ?? payload['targetDisplayName'] ?? payload['userName'] ?? payload['addedUserName'] ?? '').toString().trim();
-
-        if (actorName.isNotEmpty && targetNames.isNotEmpty) {
-          content = '**$actorName** đã thêm **$targetNames** vào nhóm';
-        } else if (targetNames.isNotEmpty) {
-          content = '**$targetNames** đã vào nhóm';
-        } else if (actorName.isNotEmpty) {
-          content = '**$actorName** đã thêm thành viên mới vào nhóm';
-        } else {
-          content = 'Thành viên mới đã vào nhóm';
-        }
-      } else if (eventType == 'MemberLeft') {
-        final userName = actorName.isNotEmpty
-            ? actorName
-            : (payload['userName'] ?? payload['targetName'] ?? payload['actorDisplayName'] ?? '').toString().trim();
-        if (userName.isNotEmpty) {
-          content = '**$userName** đã rời khỏi nhóm';
-        } else {
-          content = 'Một thành viên đã rời khỏi nhóm';
-        }
-      } else if (eventType == 'RoomUpdated') {
-        final roomName = (payload['roomName'] ?? json['roomName'] ?? '').toString().trim();
-        final avatarUrl = (payload['avatarUrl'] ?? json['avatarUrl'] ?? '').toString().trim();
-        final rawActorName = (json['actorName'] ??
-                payload['actorName'] ??
-                payload['updatedByName'] ??
-                '')
-            .toString()
-            .trim();
-        final actor = rawActorName.isNotEmpty ? rawActorName : actorName;
-        final isAvatarChanged = payload['isAvatarChanged'] == true;
-        final isNameChanged = payload['isNameChanged'] == true;
-
-        if (isNameChanged && isAvatarChanged) {
-          content = actor.isNotEmpty
-              ? '**$actor** đã đổi tên và ảnh đại diện nhóm'
-              : 'Tên và ảnh đại diện nhóm đã được cập nhật';
-        } else if (isAvatarChanged) {
-          content = actor.isNotEmpty
-              ? '**$actor** đã cập nhật ảnh đại diện nhóm'
-              : 'Ảnh đại diện nhóm đã được cập nhật';
-        } else if (isNameChanged) {
-          content = actor.isNotEmpty
-              ? '**$actor** đã đổi tên nhóm thành **$roomName**'
-              : 'Tên nhóm đã được đổi thành **$roomName**';
-        } else if (actor.isNotEmpty && roomName.isNotEmpty) {
-          content = '**$actor** đã đổi tên nhóm thành **$roomName**';
-        } else if (roomName.isNotEmpty) {
-          content = 'Tên nhóm đã được đổi thành **$roomName**';
-        } else if (actor.isNotEmpty) {
-          content = avatarUrl.isNotEmpty
-              ? '**$actor** đã cập nhật ảnh đại diện nhóm'
-              : '**$actor** đã cập nhật thông tin nhóm';
-        } else {
-          content = avatarUrl.isNotEmpty
-              ? 'Ảnh đại diện nhóm đã được cập nhật'
-              : 'Thông tin nhóm đã được cập nhật';
-        }
-      } else if (eventType == 'RoomCreated' ||
-          eventType == 'CreateRoom' ||
-          eventType == 'RoomCreate') {
-        final creatorName = (json['actorName'] ??
-                payload['actorName'] ??
-                payload['createdByName'] ??
-                payload['createdUser']?['userName'] ??
-                actorName)
-            .toString()
-            .trim();
-        final roomName =
-            (payload['roomName'] ?? json['roomName'] ?? '').toString().trim();
-        if (creatorName.isNotEmpty && roomName.isNotEmpty) {
-          content = '**$creatorName** đã tạo nhóm **$roomName**';
-        } else if (creatorName.isNotEmpty) {
-          content = '**$creatorName** đã tạo nhóm chat';
-        } else if (roomName.isNotEmpty) {
-          content = 'Nhóm **$roomName** đã được tạo';
-        } else {
-          content = 'Nhóm chat đã được tạo';
-        }
-      } else if (eventType == 'RoomDisbanded' ||
-          eventType == 'RoomClosed' ||
-          eventType == 'CloseRoom') {
-        content = actorName.isNotEmpty
-            ? '**$actorName** đã giải tán nhóm'
-            : 'Phòng chat đã bị giải tán';
-      } else {
-        content = 'Sự kiện hệ thống trong phòng';
-      }
+      final content = SystemMessageTextBuilder.build(
+            eventType: eventType,
+            json: json,
+            payload: payload,
+            actorFallback: actorName,
+          ) ??
+          'Sự kiện hệ thống trong phòng';
 
       final createdRaw = (json['createdDate'] ??
               json['createdOn'] ??
+              payload['actionAtUtc'] ??
               rawJson['createdDate'] ??
               '')
-          .toString();
+          .toString()
+          .trim();
 
-      final isDisbandEvent = eventType == 'RoomDisbanded' ||
-          eventType == 'RoomClosed' ||
-          eventType == 'CloseRoom';
+      final lowerEventType = eventType.toLowerCase();
+      final isDisbandEvent = lowerEventType == 'roomdisbanded' ||
+          lowerEventType == 'roomclosed' ||
+          lowerEventType == 'closeroom';
+
+      DateTime parseEventDate(String raw) {
+        if (raw.isEmpty) return DateTime.now();
+        var str = raw;
+        if (!str.endsWith('Z') && !str.contains('+') && !RegExp(r'-\d{2}:\d{2}$').hasMatch(str)) {
+          str = '${str}Z';
+        }
+        return DateTime.tryParse(str)?.toLocal() ?? DateTime.now();
+      }
 
       return MessageModel(
         id: (json['id'] ??
@@ -247,7 +95,7 @@ class MessageModel extends Message {
         senderDisplayName: actorName,
         content: content,
         type: isDisbandEvent ? MessageType.roomDisbanded : MessageType.system,
-        createdAt: DateTime.tryParse(createdRaw)?.toLocal() ?? DateTime.now(),
+        createdAt: parseEventDate(createdRaw),
         metadata: {'eventType': eventType, ...json, ...payload},
       );
     }
@@ -301,8 +149,7 @@ class MessageModel extends Message {
     return MessageModel(
       id: (json['MessageId'] ?? json['messageId'] ?? json['id']).toString(),
       threadId: threadId,
-      senderId:
-          (json['SenderId'] ?? json['senderId'] ?? '').toString(),
+      senderId: (json['SenderId'] ?? json['senderId'] ?? '').toString(),
       senderDisplayName:
           (json['SenderName'] ?? json['senderName'] ?? '').toString(),
       content: (json['Content'] ?? json['content'] ?? '').toString(),
@@ -310,8 +157,8 @@ class MessageModel extends Message {
         (json['Type'] ?? json['type'] ?? 'text').toString(),
       ),
       createdAt: DateTime.tryParse(
-                (json['CreatedDate'] ?? json['createdDate'] ?? '').toString(),
-              )?.toLocal() ??
+            (json['CreatedDate'] ?? json['createdDate'] ?? '').toString(),
+          )?.toLocal() ??
           DateTime.now(),
       deletedOn: deletedOn == null
           ? null

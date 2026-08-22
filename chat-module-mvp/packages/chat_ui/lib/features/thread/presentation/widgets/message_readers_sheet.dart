@@ -1,4 +1,4 @@
-import 'dart:developer' as developer;
+import 'package:chat_core/chat_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -21,7 +21,7 @@ class MessageReadersSheet extends ConsumerWidget {
     required String roomId,
     required String messageId,
   }) {
-    developer.log(
+    ChatLogger.log(
         '[MessageReadersSheet] MessageReadersSheet.show called: roomId=$roomId, messageId=$messageId');
     return showModalBottomSheet<void>(
       context: context,
@@ -38,8 +38,9 @@ class MessageReadersSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final uiConfig = ref.watch(chatUiConfigProvider);
-    final primaryColor =
-        uiConfig.primaryActionColor ?? uiConfig.iconColor ?? Theme.of(context).primaryColor;
+    final primaryColor = uiConfig.primaryActionColor ??
+        uiConfig.iconColor ??
+        Theme.of(context).primaryColor;
     final surfaceColor = uiConfig.surfaceColor ?? Colors.white;
 
     return Container(

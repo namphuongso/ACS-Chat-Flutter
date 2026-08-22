@@ -104,13 +104,13 @@ abstract class MessageRepository {
   /// Nhận tin mới cho toàn bộ danh sách hội thoại — realtime native
   /// client-level, KHÔNG cần mở thread. [roomId] dùng để lấy ACS token.
   /// Gọi nhiều lần phải trả về cùng 1 broadcast stream.
-  Stream<Message> watchListMessages(String roomId);
+  Stream<Message> watchListMessages();
 
   /// Dừng realtime cho danh sách hội thoại.
   Future<void> stopWatchingList();
 
   /// Gửi WebSocket `read` payload với lastVisibleMessageId theo giao thức backend.
-  void sendReadMessage(String lastVisibleMessageId);
+  void sendReadMessage(String lastVisibleMessageId, {String? roomId});
 
   /// Xoá trạng thái lastVisibleMessageId để không gửi nhầm read khi ở ngoài room hoặc background.
   void clearReadMessageState();

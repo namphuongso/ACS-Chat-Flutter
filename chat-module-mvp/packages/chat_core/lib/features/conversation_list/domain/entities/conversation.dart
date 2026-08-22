@@ -104,9 +104,14 @@ class Conversation {
 }
 
 class PaginatedResult<T> {
-  const PaginatedResult(
-      {required this.items, required this.hasMore, this.cursor});
+  const PaginatedResult({
+    required this.items,
+    required this.hasMore,
+    this.cursor,
+    this.totalCount,
+  });
   final List<T> items;
   final bool hasMore;
   final String? cursor;
+  final int? totalCount;
 }

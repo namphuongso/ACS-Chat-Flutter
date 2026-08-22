@@ -112,7 +112,7 @@ class _ResourceGroupCard extends ConsumerWidget {
                       Text(
                         title,
                         style: const TextStyle(
-                          fontSize: 16, 
+                          fontSize: 16,
                         ),
                       ),
                       asyncResult.maybeWhen(
@@ -252,7 +252,8 @@ class _MediaPreviewRow extends StatelessWidget {
         return Image.network(
           item.thumbUrl!,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => VideoResourceThumbnail(videoUrl: videoUrl),
+          errorBuilder: (_, __, ___) =>
+              VideoResourceThumbnail(videoUrl: videoUrl),
         );
       }
       return VideoResourceThumbnail(videoUrl: videoUrl);

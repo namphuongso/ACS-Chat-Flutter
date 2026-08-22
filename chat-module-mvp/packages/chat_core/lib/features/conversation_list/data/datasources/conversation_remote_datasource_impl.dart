@@ -97,7 +97,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
       appToken: appToken,
       query: {'roomId': roomId, 'pin': '$pin'},
     );
-    return data == true;
+    return data != false;
   }
 
   @override
@@ -163,7 +163,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
         'roomType': roomType,
       },
     );
-    return data == true;
+    return data != false;
   }
 
   @override
@@ -220,7 +220,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
         'toUserId': toUserId,
       },
     );
-    return data == true;
+    return data != false;
   }
 
   @override
@@ -239,7 +239,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
         'admin': admin.toString(),
       },
     );
-    return data == true;
+    return data != false;
   }
 
   @override
@@ -256,7 +256,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
           'newAdminUserId': newAdminUserId,
       },
     );
-    return data == true;
+    return data != false;
   }
 
   @override
@@ -266,7 +266,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
       ChatApiEndpoints.closeRoom(roomId),
       appToken: appToken,
     );
-    return data == true;
+    return data != false;
   }
 
   @override

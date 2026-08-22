@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/presentation/providers/shared_providers.dart';
 export '../../../shared/presentation/providers/shared_providers.dart';
 import '../notifiers/thread_messages_notifier.dart';
+import '../notifiers/thread_state.dart';
+export '../notifiers/thread_state.dart';
 
 // Thread Use Cases
 final sendMessageUseCaseProvider = Provider<SendMessageUseCase>((ref) {
@@ -93,7 +95,7 @@ final roomIdProvider = Provider<String>((ref) => throw UnimplementedError());
 final threadIdProvider = Provider<String>((ref) => throw UnimplementedError());
 
 final threadMessagesProvider =
-    NotifierProvider.autoDispose<ThreadMessagesNotifier, List<Message>>(
+    NotifierProvider.autoDispose<ThreadMessagesNotifier, ThreadState>(
   ThreadMessagesNotifier.new,
   dependencies: [
     roomIdProvider,
@@ -109,7 +111,8 @@ final threadMessagesProvider =
   ],
 );
 
-final uploadFileViaSasUseCaseProvider = Provider<UploadFileViaSasUseCase>((ref) {
+final uploadFileViaSasUseCaseProvider =
+    Provider<UploadFileViaSasUseCase>((ref) {
   final repo = ref.watch(conversationRepositoryProvider);
   return UploadFileViaSasUseCase(repo);
 });
@@ -165,8 +168,7 @@ class MediaUploadProgressNotifier
 }
 
 final mediaUploadProgressProvider = NotifierProvider<
-    MediaUploadProgressNotifier,
-    Map<String, List<MediaUploadItemProgress>?>>(
+    MediaUploadProgressNotifier, Map<String, List<MediaUploadItemProgress>?>>(
   MediaUploadProgressNotifier.new,
 );
 
@@ -265,10 +267,13 @@ final roomResourcePreviewProvider = FutureProvider.autoDispose.family<
       pageIndex: 1,
       pageSize: 3,
     );
-    final combined = <MessageResource>[...imageResult.items, ...videoResult.items]
-      ..sort((a, b) => b.createdDate.compareTo(a.createdDate));
+    final combined = <MessageResource>[
+      ...imageResult.items,
+      ...videoResult.items
+    ]..sort((a, b) => b.createdDate.compareTo(a.createdDate));
     final previewItems = combined.take(3).toList();
-    final total = imageResult.items.length + videoResult.items.length;
+    final total = (imageResult.totalCount ?? imageResult.items.length) +
+        (videoResult.totalCount ?? videoResult.items.length);
     return RoomResourceGroupResult(
       items: previewItems,
       totalCount: total,
@@ -282,7 +287,7 @@ final roomResourcePreviewProvider = FutureProvider.autoDispose.family<
     );
     return RoomResourceGroupResult(
       items: fileResult.items.take(3).toList(),
-      totalCount: fileResult.items.length,
+      totalCount: fileResult.totalCount ?? fileResult.items.length,
     );
   } else {
     final linkResult = await useCase(
@@ -293,7 +298,7 @@ final roomResourcePreviewProvider = FutureProvider.autoDispose.family<
     );
     return RoomResourceGroupResult(
       items: linkResult.items.take(3).toList(),
-      totalCount: linkResult.items.length,
+      totalCount: linkResult.totalCount ?? linkResult.items.length,
     );
   }
 });

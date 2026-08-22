@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:chat_core/chat_core.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,8 +10,8 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../../../../core/chat_ui_config.dart';
 import '../../../../core/widgets/chat_dialogs.dart';
-import 'attachment_panel.dart';
-import 'gallery_panel.dart';
+import 'attachment_action.dart';
+import 'asset_thumb_tile.dart';
 
 class MessageInput extends ConsumerStatefulWidget {
   const MessageInput({
@@ -161,6 +161,36 @@ class _MessageInputState extends ConsumerState<MessageInput>
     return resolved;
   }
 
+  Future<void> _processAndSendImages(
+    List<({String path, String fileName})> imageFiles,
+  ) async {
+    final imagesToSend = <({String path, String fileName})>[];
+
+    for (final item in imageFiles) {
+      final file = File(item.path);
+      final size = file.existsSync() ? await file.length() : 0;
+      if (size > 100 * 1024 * 1024) {
+        if (!mounted) return;
+        final confirm = await showSendAsFileDialog(
+          context: context,
+          fileName: item.fileName,
+          sizeBytes: size,
+          config: ref.read(chatUiConfigProvider),
+        );
+        if (confirm) {
+          imagesToSend.add(item);
+        }
+      } else {
+        imagesToSend.add(item);
+      }
+    }
+
+    if (!mounted) return;
+    if (imagesToSend.isNotEmpty) {
+      widget.onSendImages?.call(imagesToSend);
+    }
+  }
+
   Future<void> _takePhoto() async {
     _focusNode.unfocus();
     setState(() {
@@ -185,7 +215,7 @@ class _MessageInputState extends ConsumerState<MessageInput>
       ]);
       if (!mounted) return;
       if (validFiles.isNotEmpty) {
-        widget.onSendImages?.call(validFiles);
+        await _processAndSendImages(validFiles);
       }
     } catch (e) {
       if (!mounted) return;
@@ -213,7 +243,7 @@ class _MessageInputState extends ConsumerState<MessageInput>
     final validFiles = await _resolvePickedFiles(result.files);
     if (!mounted) return;
     if (validFiles.isNotEmpty) {
-      widget.onSendImages?.call(validFiles);
+      await _processAndSendImages(validFiles);
     }
   }
 
@@ -356,8 +386,8 @@ class _MessageInputState extends ConsumerState<MessageInput>
             fileName =
                 fileName.substring(0, fileName.lastIndexOf('.')) + '.jpg';
           } else {
-            developer.log(
-              '[ChatModule] HEIC convert failed for $fileName — gửi file gốc (BE có thể từ chối)',
+            ChatLogger.warn(
+              'HEIC convert failed for $fileName — gửi file gốc (BE có thể từ chối)',
             );
           }
         }
@@ -389,7 +419,7 @@ class _MessageInputState extends ConsumerState<MessageInput>
       if (picked.isNotEmpty) _showGallery = false;
     });
     if (pickedImages.isNotEmpty) {
-      widget.onSendImages?.call(pickedImages);
+      await _processAndSendImages(pickedImages);
     }
     if (pickedVideos.isNotEmpty) {
       widget.onSendVideos?.call(pickedVideos);
@@ -506,8 +536,8 @@ class _MessageInputState extends ConsumerState<MessageInput>
     ];
     for (final size in attempts) {
       try {
-        developer.log(
-          '[ChatModule] HEIC convert $fileName — requesting ${size.width}x${size.height}',
+        ChatLogger.log(
+          'HEIC convert $fileName — requesting ${size.width}x${size.height}',
         );
         final jpegData = await asset.thumbnailDataWithSize(
           size,
@@ -519,15 +549,14 @@ class _MessageInputState extends ConsumerState<MessageInput>
             '${Directory.systemTemp.path}/chat_heic_${DateTime.now().millisecondsSinceEpoch}_${asset.id.hashCode}.jpg',
           );
           await convFile.writeAsBytes(jpegData, flush: true);
-          developer.log(
-            '[ChatModule] HEIC convert OK: ${jpegData.length} bytes',
+          ChatLogger.log(
+            'HEIC convert OK: ${jpegData.length} bytes',
           );
           return convFile;
         }
-        developer.log('[ChatModule] HEIC convert returned empty data');
+        ChatLogger.warn('HEIC convert returned empty data');
       } catch (e, st) {
-        developer.log('[ChatModule] HEIC convert error',
-            error: e, stackTrace: st);
+        ChatLogger.error('HEIC convert error', error: e, stackTrace: st);
       }
     }
     return null;

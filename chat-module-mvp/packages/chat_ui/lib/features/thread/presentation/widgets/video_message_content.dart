@@ -19,8 +19,6 @@ class VideoMessageContent extends StatefulWidget {
 
 class _VideoMessageContentState extends State<VideoMessageContent> {
   static const double _width = 200;
-  static final Map<String, VideoPlayerController> _controllerCache = {};
-  static final Map<String, Future<void>> _initFuturesCache = {};
 
   VideoPlayerController? _controller;
   bool _initializing = false;
@@ -40,6 +38,14 @@ class _VideoMessageContentState extends State<VideoMessageContent> {
     }
   }
 
+  @override
+  void dispose() {
+    _controller?.removeListener(_onPlayerUpdate);
+    _controller?.dispose();
+    _controller = null;
+    super.dispose();
+  }
+
   Uri? _resolveVideoUrl() {
     final raw = widget.url.trim();
     if (raw.isEmpty) return null;
@@ -54,39 +60,6 @@ class _VideoMessageContentState extends State<VideoMessageContent> {
       return;
     }
 
-    final cacheKey = uri.toString();
-
-    final cached = _controllerCache[cacheKey];
-    if (cached != null && cached.value.isInitialized) {
-      _controller?.removeListener(_onPlayerUpdate);
-      _controller = cached;
-      _controller!.addListener(_onPlayerUpdate);
-      if (mounted) {
-        setState(() {
-          _initializing = false;
-          _errorMessage = null;
-        });
-      }
-      return;
-    }
-
-    if (_initFuturesCache.containsKey(cacheKey)) {
-      if (mounted) setState(() => _initializing = true);
-      await _initFuturesCache[cacheKey];
-      final freshlyInit = _controllerCache[cacheKey];
-      if (freshlyInit != null && freshlyInit.value.isInitialized) {
-        _controller?.removeListener(_onPlayerUpdate);
-        _controller = freshlyInit;
-        _controller!.addListener(_onPlayerUpdate);
-      }
-      if (mounted) {
-        setState(() {
-          _initializing = false;
-        });
-      }
-      return;
-    }
-
     if (mounted) {
       setState(() {
         _initializing = true;
@@ -94,37 +67,32 @@ class _VideoMessageContentState extends State<VideoMessageContent> {
       });
     }
 
-    final controller = VideoPlayerController.networkUrl(uri);
-    final initFuture = _initializeControllerInternal(controller, cacheKey);
-    _initFuturesCache[cacheKey] = initFuture;
-    await initFuture;
-    _initFuturesCache.remove(cacheKey);
+    final oldController = _controller;
+    _controller = null;
+    oldController?.removeListener(_onPlayerUpdate);
+    await oldController?.dispose();
 
-    if (mounted) {
+    final controller = VideoPlayerController.networkUrl(uri);
+    try {
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      controller.setLooping(false);
+      _controller = controller;
+      _controller!.addListener(_onPlayerUpdate);
       setState(() {
         _initializing = false;
       });
-    }
-  }
-
-  Future<void> _initializeControllerInternal(
-    VideoPlayerController controller,
-    String cacheKey,
-  ) async {
-    try {
-      await controller.initialize();
-      controller.setLooping(false);
-      _controllerCache[cacheKey] = controller;
-      _controller?.removeListener(_onPlayerUpdate);
-      _controller = controller;
-      _controller!.addListener(_onPlayerUpdate);
     } catch (e) {
+      await controller.dispose();
       if (mounted) {
         setState(() {
+          _initializing = false;
           _errorMessage = 'Không thể phát video';
         });
       }
-      await controller.dispose();
     }
   }
 
@@ -206,10 +174,14 @@ class _VideoMessageContentState extends State<VideoMessageContent> {
                 if (!isPlaying) Container(color: Colors.black26),
                 Center(
                   child: Icon(
-                    isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill,
+                    isPlaying
+                        ? Icons.pause_circle_filled
+                        : Icons.play_circle_fill,
                     size: 56,
                     color: Colors.white.withValues(alpha: 0.92),
-                    shadows: const [Shadow(color: Colors.black38, blurRadius: 8)],
+                    shadows: const [
+                      Shadow(color: Colors.black38, blurRadius: 8)
+                    ],
                   ),
                 ),
                 if (isPlaying)

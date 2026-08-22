@@ -134,7 +134,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         .map((e) => Map<String, dynamic>.from(e))
         .toList();
 
-    for (var i = 0; i < rawItems.length; i++) {
+    Map<String, dynamic>? nextPayload;
+    for (var i = rawItems.length - 1; i >= 0; i--) {
       final item = rawItems[i];
       final itemType = item['itemType']?.toString();
       final itemData = (itemType != null && item['data'] is Map)
@@ -149,33 +150,23 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         final roomName = (payload['roomName'] ?? itemData['roomName'] ?? '').toString().trim();
         final avatarUrl = (payload['avatarUrl'] ?? itemData['avatarUrl'] ?? '').toString().trim();
 
-        Map<String, dynamic>? prevPayload;
-        for (var j = i + 1; j < rawItems.length; j++) {
-          final nextItem = rawItems[j];
-          final nextItemType = nextItem['itemType']?.toString();
-          final nextData = (nextItemType != null && nextItem['data'] is Map)
-              ? (nextItem['data'] as Map).cast<String, dynamic>()
-              : nextItem;
-          if (nextData['eventType']?.toString() == 'RoomUpdated') {
-            prevPayload = (nextData['payload'] is Map)
-                ? (nextData['payload'] as Map).cast<String, dynamic>()
-                : <String, dynamic>{};
-            break;
-          }
-        }
-
-        if (prevPayload != null) {
-          final prevRoomName = (prevPayload['roomName'] ?? '').toString().trim();
-          final prevAvatarUrl = (prevPayload['avatarUrl'] ?? '').toString().trim();
-          final nameChanged = roomName.isNotEmpty && prevRoomName.isNotEmpty && roomName != prevRoomName;
-          final avatarChanged = avatarUrl.isNotEmpty && avatarUrl != prevAvatarUrl;
+        if (nextPayload != null) {
+          final nextRoomName = (nextPayload['roomName'] ?? '').toString().trim();
+          final nextAvatarUrl = (nextPayload['avatarUrl'] ?? '').toString().trim();
+          final nameChanged = roomName.isNotEmpty && nextRoomName.isNotEmpty && roomName != nextRoomName;
+          final avatarChanged = avatarUrl != nextAvatarUrl && (avatarUrl.isNotEmpty || nextAvatarUrl.isNotEmpty);
 
           if (nameChanged) payload['isNameChanged'] = true;
           if (avatarChanged) payload['isAvatarChanged'] = true;
         } else {
-          if (avatarUrl.isNotEmpty) payload['isAvatarChanged'] = true;
+          if (roomName.isNotEmpty && avatarUrl.isEmpty) {
+            payload['isNameChanged'] = true;
+          } else if (avatarUrl.isNotEmpty && roomName.isEmpty) {
+            payload['isAvatarChanged'] = true;
+          }
         }
 
+        nextPayload = payload;
         itemData['payload'] = payload;
         if (itemType != null && item['data'] is Map) {
           item['data'] = itemData;
@@ -450,6 +441,7 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       items: items,
       hasMore: hasMore,
       cursor: hasMore ? '${pageIndex + 1}' : null,
+      totalCount: totalRecord,
     );
   }
 

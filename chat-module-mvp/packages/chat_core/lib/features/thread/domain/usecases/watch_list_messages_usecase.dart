@@ -5,5 +5,5 @@ class WatchListMessagesUseCase {
   WatchListMessagesUseCase(this._repository);
   final MessageRepository _repository;
 
-  Stream<Message> call(String roomId) => _repository.watchListMessages(roomId);
+  Stream<Message> call() => _repository.watchListMessages();
 }

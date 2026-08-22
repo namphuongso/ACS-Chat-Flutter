@@ -1,29 +1,23 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
-
-import 'package:chat_native_platform_interface/chat_native_platform_interface.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../../../../core/config/chat_module_config.dart';
 import '../../../../core/utils/chat_logger.dart';
-import '../../../auth_token/domain/repositories/auth_token_repository.dart';
 import '../../../auth_token/domain/repositories/chat_auth_token_provider.dart';
 import '../../domain/entities/message.dart';
+import '../../domain/services/system_message_text.dart';
 import '../models/message_model.dart';
 import 'native_realtime_datasource.dart';
 
+typedef WebSocketRealtimeDataSourceImpl = NativeRealtimeDataSourceImpl;
+
 /// Realtime app-wide qua backend WebSocket.
-///
-/// Tên class/interface cũ được giữ lại để không làm breaking các app đang
-/// tích hợp. [platform] và [authTokenRepository] cũng còn trong constructor
-/// cho tương thích source, nhưng realtime không còn phụ thuộc ACS native.
 class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
   NativeRealtimeDataSourceImpl({
     required ChatModuleConfig config,
     ChatAuthTokenProvider? appTokenProvider,
-    AuthTokenRepository? authTokenRepository,
-    ChatNativePlatformInterface? platform,
   })  : _config = config,
         _appTokenProvider = appTokenProvider,
         _deviceId = config.deviceId ?? _createProcessDeviceId();
@@ -47,6 +41,7 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
   bool _sessionExpired = false;
   int _reconnectAttempt = 0;
   final Set<String> _activeRoomIds = {};
+  final Set<String> _watchedRoomIds = {};
   DateTime _lastReceivedTime = DateTime.now();
   String? _lastVisibleMessageId;
 
@@ -140,15 +135,18 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
       final decoded = jsonDecode(raw.toString());
       if (decoded is! Map) return;
       final event = decoded.cast<String, dynamic>();
-      final prettyJson = const JsonEncoder.withIndent('  ').convert(event);
-      ChatLogger.log('WebSocket event:\n$prettyJson');
+      if (ChatLogger.enabled) {
+        final prettyJson = const JsonEncoder.withIndent('  ').convert(event);
+        ChatLogger.log('WebSocket event:\n$prettyJson');
+      }
       final type = event['type']?.toString();
 
       if (type == 'connected') {
         _serverConnected = true;
         final interval = _intValue(event['heartbeatIntervalSeconds']) ?? 30;
         _startHeartbeat(Duration(seconds: max(5, interval)));
-        for (final roomId in _activeRoomIds) {
+        final roomsToEnter = {..._activeRoomIds, ..._watchedRoomIds};
+        for (final roomId in roomsToEnter) {
           _send({'type': 'enter_room', 'roomId': roomId});
         }
         return;
@@ -191,7 +189,7 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
         threadId: targetId,
         senderId: (data['deletedBy'] ?? '').toString(),
         senderDisplayName: '',
-        content: '(tin nhắn đã bị xoá)',
+        content: '(Tin nhắn đã bị xoá)',
         type: MessageType.text,
         createdAt: deletedAt ?? DateTime.now(),
         deletedOn: deletedAt,
@@ -256,11 +254,13 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
     }
 
     if (eventType == 'RoomCreated') {
-      final roomName = (data['roomName'] ?? '').toString();
       final createdByName = (data['createdByName'] ?? '').toString();
-      final content = createdByName.isNotEmpty
-          ? '**$createdByName** đã tạo phòng **$roomName**'
-          : 'Phòng mới đã được tạo';
+      final content = SystemMessageTextBuilder.build(
+            eventType: 'RoomCreated',
+            json: data,
+            actorFallback: createdByName,
+          ) ??
+          'Phòng mới đã được tạo';
       final signal = MessageModel(
         id: 'room_created_${DateTime.now().millisecondsSinceEpoch}',
         threadId: targetId,
@@ -276,21 +276,37 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
     }
 
     if (eventType == 'RoomUpdated') {
-      final roomName = (data['roomName'] ?? '').toString().trim();
-      final avatarUrl = (data['avatarUrl'] ?? '').toString().trim();
+      final payload = (data['payload'] is Map)
+          ? (data['payload'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      final roomName =
+          (data['roomName'] ?? payload['roomName'] ?? '').toString().trim();
+      final avatarUrl =
+          (data['avatarUrl'] ?? payload['avatarUrl'] ?? '').toString().trim();
       final actorName = (data['actorName'] ??
               data['updatedByName'] ??
               data['changedByName'] ??
+              payload['actorName'] ??
+              payload['updatedByName'] ??
+              payload['changedByName'] ??
               '')
           .toString()
           .trim();
+      final content = SystemMessageTextBuilder.build(
+            eventType: 'RoomUpdated',
+            json: data,
+            payload: payload,
+            actorFallback: actorName,
+          ) ??
+          'Thông tin nhóm đã được cập nhật';
+
       final signal = MessageModel(
         id: 'room_updated_${DateTime.now().millisecondsSinceEpoch}',
         threadId: targetId,
         senderId: '',
         senderDisplayName: actorName,
-        content: roomName,
-        type: MessageType.roomUpdatedUpdate,
+        content: content,
+        type: MessageType.system,
         createdAt: DateTime.now(),
         metadata: {
           'eventType': 'RoomUpdated',
@@ -305,12 +321,17 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
     }
 
     if (eventType == 'RoomDisbanded') {
+      final content = SystemMessageTextBuilder.build(
+            eventType: 'RoomDisbanded',
+            json: data,
+          ) ??
+          'Phòng chat đã bị giải tán';
       final signal = MessageModel(
         id: 'room_disbanded_${DateTime.now().millisecondsSinceEpoch}',
         threadId: targetId,
         senderId: (data['disbandedBy'] ?? '').toString(),
         senderDisplayName: '',
-        content: 'Phòng chat đã bị giải tán',
+        content: content,
         type: MessageType.roomDisbanded,
         createdAt: DateTime.now(),
         metadata: {'eventType': 'RoomDisbanded', ...data},
@@ -348,29 +369,14 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
               '')
           .toString()
           .trim();
-      final isAdmin = payload['isAdmin'] == true ||
-          data['isAdmin'] == true ||
-          payload['role']?.toString().toLowerCase() == 'admin' ||
-          data['role']?.toString().toLowerCase() == 'admin' ||
-          payload['newRole']?.toString().toLowerCase() == 'admin' ||
-          data['newRole']?.toString().toLowerCase() == 'admin';
-
-      final String content;
-      if (actorName.isNotEmpty && targetName.isNotEmpty) {
-        content = isAdmin
-            ? '**$actorName** đã phong **$targetName** làm Admin'
-            : '**$actorName** đã gỡ quyền Admin của **$targetName**';
-      } else if (targetName.isNotEmpty) {
-        content = isAdmin
-            ? '**$targetName** đã được phong làm Admin'
-            : '**$targetName** đã bị gỡ quyền Admin';
-      } else if (actorName.isNotEmpty) {
-        content = isAdmin
-            ? '**$actorName** đã thêm Admin mới'
-            : '**$actorName** đã gỡ quyền Admin';
-      } else {
-        content = 'Quyền Admin trong phòng đã thay đổi';
-      }
+      final content = SystemMessageTextBuilder.build(
+            eventType: 'RoomRoleChanged',
+            json: data,
+            payload: payload,
+            actorFallback: actorName,
+            targetFallback: targetName,
+          ) ??
+          'Quyền Admin trong phòng đã thay đổi';
 
       final signal = MessageModel(
         id: 'room_role_${DateTime.now().millisecondsSinceEpoch}',
@@ -409,16 +415,14 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
           .toString()
           .trim();
 
-      final String content;
-      if (actorName.isNotEmpty && targetName.isNotEmpty) {
-        content = '**$actorName** đã chuyển quyền Trưởng phòng cho **$targetName**';
-      } else if (targetName.isNotEmpty) {
-        content = '**$targetName** đã trở thành Trưởng phòng mới';
-      } else if (actorName.isNotEmpty) {
-        content = '**$actorName** đã chuyển quyền Trưởng phòng';
-      } else {
-        content = 'Quyền Trưởng phòng đã được chuyển giao';
-      }
+      final content = SystemMessageTextBuilder.build(
+            eventType: 'RoomOwnershipTransferred',
+            json: data,
+            payload: payload,
+            actorFallback: actorName,
+            targetFallback: targetName,
+          ) ??
+          'Quyền Trưởng phòng đã được chuyển giao';
 
       final signal = MessageModel(
         id: 'room_owner_${DateTime.now().millisecondsSinceEpoch}',
@@ -457,14 +461,30 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
     }
 
     if (eventType == 'MemberJoined') {
-      final actorName = (data['actorName'] ?? data['addedByName'] ?? '').toString();
+      final payload = (data['payload'] is Map)
+          ? (data['payload'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      final actorName = (data['actorName'] ??
+              data['addedByName'] ??
+              payload['actorName'] ??
+              payload['addedByName'] ??
+              '')
+          .toString();
+      final content = SystemMessageTextBuilder.build(
+            eventType: 'MemberJoined',
+            json: data,
+            payload: payload,
+            actorFallback: actorName,
+          ) ??
+          'Thành viên mới đã vào nhóm';
       final signal = MessageModel(
         id: 'member_joined_${DateTime.now().millisecondsSinceEpoch}',
         threadId: targetId,
-        senderId: (data['actorUserId'] ?? data['addedByUserId'] ?? '').toString(),
+        senderId:
+            (data['actorUserId'] ?? data['addedByUserId'] ?? '').toString(),
         senderDisplayName: actorName,
-        content: '',
-        type: MessageType.memberJoinedUpdate,
+        content: content,
+        type: MessageType.system,
         createdAt: DateTime.now(),
         metadata: {'eventType': 'MemberJoined', ...data},
       );
@@ -473,14 +493,29 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
     }
 
     if (eventType == 'MemberLeft') {
-      final actorName = (data['actorName'] ?? data['userName'] ?? '').toString();
+      final payload = (data['payload'] is Map)
+          ? (data['payload'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      final actorName = (data['actorName'] ??
+              data['userName'] ??
+              payload['actorName'] ??
+              payload['userName'] ??
+              '')
+          .toString();
+      final content = SystemMessageTextBuilder.build(
+            eventType: 'MemberLeft',
+            json: data,
+            payload: payload,
+            actorFallback: actorName,
+          ) ??
+          'Một thành viên đã rời khỏi nhóm';
       final signal = MessageModel(
         id: 'member_left_${DateTime.now().millisecondsSinceEpoch}',
         threadId: targetId,
         senderId: (data['userId'] ?? data['actorUserId'] ?? '').toString(),
         senderDisplayName: actorName,
-        content: '',
-        type: MessageType.memberLeftUpdate,
+        content: content,
+        type: MessageType.system,
         createdAt: DateTime.now(),
         metadata: {'eventType': 'MemberLeft', ...data},
       );
@@ -489,19 +524,44 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
     }
 
     if (eventType == 'MemberRemoved') {
-      final payload = (data['payload'] is Map) ? (data['payload'] as Map).cast<String, dynamic>() : <String, dynamic>{};
-      final removedUserId = (data['removedUserId'] ?? payload['removedUserId'] ?? '').toString();
-      final removedByUserId = (data['removedByUserId'] ?? data['actorUserId'] ?? payload['removedByUserId'] ?? payload['actorUserId'] ?? '').toString();
-      final actorName = (data['actorName'] ?? payload['actorName'] ?? payload['removedByName'] ?? '').toString();
-      final removedUserName = (data['removedUserName'] ?? payload['removedUserName'] ?? payload['targetName'] ?? '').toString();
+      final payload = (data['payload'] is Map)
+          ? (data['payload'] as Map).cast<String, dynamic>()
+          : <String, dynamic>{};
+      final removedUserId =
+          (data['removedUserId'] ?? payload['removedUserId'] ?? '').toString();
+      final removedByUserId = (data['removedByUserId'] ??
+              data['actorUserId'] ??
+              payload['removedByUserId'] ??
+              payload['actorUserId'] ??
+              '')
+          .toString();
+      final actorName = (data['actorName'] ??
+              payload['actorName'] ??
+              payload['removedByName'] ??
+              '')
+          .toString();
+      final removedUserName = (data['removedUserName'] ??
+              payload['removedUserName'] ??
+              payload['targetName'] ??
+              '')
+          .toString();
+
+      final content = SystemMessageTextBuilder.build(
+            eventType: 'MemberRemoved',
+            json: data,
+            payload: payload,
+            actorFallback: actorName,
+            targetFallback: removedUserName,
+          ) ??
+          'Một thành viên đã bị xóa khỏi nhóm';
 
       final signal = MessageModel(
         id: 'member_removed_${DateTime.now().millisecondsSinceEpoch}',
         threadId: targetId,
         senderId: removedByUserId,
         senderDisplayName: actorName,
-        content: '',
-        type: MessageType.memberRemovedUpdate,
+        content: content,
+        type: MessageType.system,
         createdAt: DateTime.now(),
         metadata: {
           'eventType': 'MemberRemoved',
@@ -545,19 +605,44 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
     });
   }
 
+  bool _isAppPaused = false;
+
   @override
-  void sendReadMessage(String lastVisibleMessageId) {
+  void sendReadMessage(String lastVisibleMessageId, {String? roomId}) {
     if (lastVisibleMessageId.isEmpty) return;
+    if (_isAppPaused) {
+      ChatLogger.log(
+          '[sendReadMessage] Skipped: app is paused / in background');
+      return;
+    }
     if (_lastVisibleMessageId == lastVisibleMessageId) {
-      ChatLogger.log('[sendReadMessage] Skipped: already sent for $lastVisibleMessageId');
+      ChatLogger.log(
+          '[sendReadMessage] Skipped: already sent for $lastVisibleMessageId');
       return;
     }
     _lastVisibleMessageId = lastVisibleMessageId;
     if (_serverConnected) {
-      _send({
-        'type': 'read',
-        'lastVisibleMessageId': lastVisibleMessageId,
-      });
+      final targetRooms = <String>{};
+      if (roomId != null && roomId.isNotEmpty) {
+        targetRooms.add(roomId);
+      }
+      targetRooms.addAll(_activeRoomIds);
+      targetRooms.addAll(_watchedRoomIds);
+      targetRooms.addAll(_threadIdsByRoom.keys);
+
+      if (targetRooms.isEmpty) {
+        ChatLogger.log(
+            '[sendReadMessage] Skipped: no target rooms for $lastVisibleMessageId');
+        return;
+      }
+
+      for (final rId in targetRooms) {
+        _send({
+          'type': 'read',
+          'roomId': rId,
+          'lastVisibleMessageId': lastVisibleMessageId,
+        });
+      }
     } else {
       ChatLogger.log('[sendReadMessage] Skipped: _serverConnected is false');
     }
@@ -570,13 +655,19 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
 
   @override
   void leaveActiveRoom() {
-    if (_lastVisibleMessageId == null && _activeRoomIds.isEmpty) return;
-    if (_serverConnected) {
-      for (final roomId in _activeRoomIds) {
+    _isAppPaused = true;
+    final roomsToLeave = {
+      ..._activeRoomIds,
+      ..._watchedRoomIds,
+      ..._threadIdsByRoom.keys
+    };
+    if (_serverConnected && roomsToLeave.isNotEmpty) {
+      for (final roomId in roomsToLeave) {
         _send({
           'type': 'leave_room',
           'roomId': roomId,
-          if (_lastVisibleMessageId != null && _lastVisibleMessageId!.isNotEmpty)
+          if (_lastVisibleMessageId != null &&
+              _lastVisibleMessageId!.isNotEmpty)
             'lastVisibleMessageId': _lastVisibleMessageId,
         });
       }
@@ -660,8 +751,10 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
 
   @override
   Stream<MessageModel> watchNewMessages(String roomId, String threadId) {
+    _isAppPaused = false;
     _threadIdsByRoom[roomId] = threadId;
     _activeRoomIds.add(roomId);
+    _watchedRoomIds.add(roomId);
     _lastVisibleMessageId = null;
 
     if (_serverConnected) {
@@ -679,7 +772,7 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
   }
 
   @override
-  Stream<MessageModel> watchListMessages(String roomId) {
+  Stream<MessageModel> watchListMessages() {
     final existing = _listController;
     if (existing != null) return existing.stream;
     _listController = StreamController<MessageModel>.broadcast();
@@ -697,6 +790,7 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
     for (final roomId in roomIds) {
       _threadIdsByRoom.remove(roomId);
       _activeRoomIds.remove(roomId);
+      _watchedRoomIds.remove(roomId);
       if (_serverConnected) {
         _send({'type': 'leave_room', 'roomId': roomId});
       }

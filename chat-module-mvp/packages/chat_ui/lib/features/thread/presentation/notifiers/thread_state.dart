@@ -32,6 +32,7 @@ class ThreadState {
     bool? hasMore,
     bool? isLoadingOlder,
     String? cursor,
+    bool clearCursor = false,
   }) {
     return ThreadState(
       messages: messages ?? this.messages,
@@ -41,7 +42,7 @@ class ThreadState {
       myAcsUserId: myAcsUserId ?? this.myAcsUserId,
       hasMore: hasMore ?? this.hasMore,
       isLoadingOlder: isLoadingOlder ?? this.isLoadingOlder,
-      cursor: cursor ?? this.cursor,
+      cursor: clearCursor ? null : (cursor ?? this.cursor),
     );
   }
 
@@ -60,8 +61,7 @@ class ThreadState {
           cursor == other.cursor;
 
   @override
-  int get hashCode =>
-      Object.hash(
+  int get hashCode => Object.hash(
         Object.hashAll(messages),
         Object.hashAll(pinnedMessages),
         historyLoaded,

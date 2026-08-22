@@ -41,9 +41,8 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
   void _startListRealtime() {
     if (_listRealtimeStarted) return;
     _listRealtimeStarted = true;
-    final roomId = state.firstOrNull?.id ?? '';
     _listRealtimeSub = ref
-        .read(watchListMessagesUseCaseProvider)(roomId)
+        .read(watchListMessagesUseCaseProvider)()
         .listen(_onNewMessage);
   }
 
@@ -65,7 +64,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
       final isSelfRemoved = metadata?['isSelf'] == true ||
           (removedUserId.isNotEmpty &&
               currentUserId.isNotEmpty &&
-              _isSameUser(removedUserId, currentUserId));
+              AcsUserUtils.isSameAcsUser(removedUserId, currentUserId));
       if (isSelfRemoved) {
         removeRoom(message.threadId);
         return;
@@ -103,7 +102,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
         ? ref.read(globalCurrentUserIdProvider)
         : ref.read(currentUserIdProvider);
     final isMe = message.senderId.isNotEmpty &&
-        _isSameUser(message.senderId, currentUserId);
+        AcsUserUtils.isSameAcsUser(message.senderId, currentUserId);
 
     final idx = state.indexWhere((c) => c.id == message.threadId || c.threadId == message.threadId);
     if (idx != -1) {
@@ -117,8 +116,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
         ),
         unreadCount: isMe ? 0 : conversation.unreadCount + 1,
       );
-      final rest = state.where((c) => c.id != updated.id).toList();
-      state = [..._pinnedFirst(rest), updated, ..._unpinnedFirst(rest)];
+      state = _reorderWithUpdated(state, updated);
     } else {
       _scheduleRefreshForNewRoom();
     }
@@ -236,8 +234,10 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
   bool get hasMore => _cursor != null;
 
   void updateRoomPin(String roomId, bool pin) {
-    state =
-        state.map((c) => c.id == roomId ? c.copyWith(pin: pin) : c).toList();
+    final idx = state.indexWhere((c) => c.id == roomId || c.threadId == roomId);
+    if (idx == -1) return;
+    final updated = state[idx].copyWith(pin: pin);
+    state = _reorderWithUpdated(state, updated);
   }
 
   void markAsRead(String roomId) {
@@ -279,8 +279,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
   /// Thêm hoặc cập nhật 1 room vào danh sách (dùng ngay sau khi tạo phòng
   /// trực tiếp từ danh bạ) — room mới hiện ngay, không cần pull-to-refresh.
   void addOrUpdateRoom(Conversation conversation) {
-    final rest = state.where((c) => c.id != conversation.id).toList();
-    state = [..._pinnedFirst(rest), conversation, ..._unpinnedFirst(rest)];
+    state = _reorderWithUpdated(state, conversation);
   }
 
   /// Cập nhật tin nhắn cuối + đẩy room lên đầu khi có tin mới (real-time
@@ -302,22 +301,25 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
         senderId: message.senderId,
       ),
     );
-    final rest = state.where((c) => c.id != updated.id).toList();
-    state = [..._pinnedFirst(rest), updated, ..._unpinnedFirst(rest)];
+    state = _reorderWithUpdated(state, updated);
   }
 
-  bool _isSameUser(String raw1, String raw2) {
-    if (raw1.isEmpty || raw2.isEmpty) return false;
-    final clean1 = raw1.startsWith('8:acs:') ? raw1.substring(6) : raw1;
-    final clean2 = raw2.startsWith('8:acs:') ? raw2.substring(6) : raw2;
-    return clean1.trim().toLowerCase() == clean2.trim().toLowerCase();
+  /// Sắp xếp lại danh sách phòng:
+  /// - Nếu room được ghim (`pin == true`): nhảy lên đầu nhóm ghim.
+  /// - Nếu room không ghim (`pin == false`): nhảy lên đầu nhóm không ghim.
+  List<Conversation> _reorderWithUpdated(
+      List<Conversation> currentList, Conversation updated) {
+    final rest = currentList.where((c) => c.id != updated.id).toList();
+    final pinned = rest.where((c) => c.pin).toList();
+    final unpinned = rest.where((c) => !c.pin).toList();
+
+    if (updated.pin) {
+      return [updated, ...pinned, ...unpinned];
+    } else {
+      return [...pinned, updated, ...unpinned];
+    }
   }
 
-  List<Conversation> _pinnedFirst(List<Conversation> list) =>
-      list.where((c) => c.pin).toList();
-
-  List<Conversation> _unpinnedFirst(List<Conversation> list) =>
-      list.where((c) => !c.pin).toList();
 }
 
 /// Trạng thái đang load lần đầu của danh sách room — dùng cho skeleton

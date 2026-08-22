@@ -49,7 +49,8 @@ class PinnedMessageBanner extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 13,
-                  color: config.pinnedMessageTextColor ?? Colors.orange.shade900,
+                  color:
+                      config.pinnedMessageTextColor ?? Colors.orange.shade900,
                   fontWeight: FontWeight.w500,
                 ),
               ),

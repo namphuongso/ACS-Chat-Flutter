@@ -4,7 +4,7 @@
 class ChatModuleConfig {
   const ChatModuleConfig({
     required this.backendBaseUrl,
-    required this.acsEndpoint,
+    @deprecated this.acsEndpoint = '',
     this.apiKey,
     this.pollingIntervalSmallGroup = const Duration(seconds: 4),
     this.pollingIntervalLargeGroup = const Duration(seconds: 12),
@@ -22,7 +22,8 @@ class ChatModuleConfig {
   /// API Key xác thực cho backend headers (truyền qua X-API-KEY).
   final String? apiKey;
 
-  /// Địa chỉ REST API Endpoint của Azure Communication Services, vd `https://my-acs.communication.azure.com`
+  /// [Di sản - Deprecated]: Hệ thống hiện tại dùng WebSocket Backend `/ws/chat/view`.
+  @deprecated
   final String acsEndpoint;
 
   /// Interval polling cho nhóm nhỏ (mục 5 kế hoạch gốc: 3-5s).

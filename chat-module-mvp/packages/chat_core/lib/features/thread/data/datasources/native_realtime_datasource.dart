@@ -8,13 +8,13 @@ abstract class NativeRealtimeDataSource {
   /// Nhận tin mới cho TOÀN BỘ hội thoại của user (không cần mở thread) —
   /// realtime native là client-level (`startRealtimeNotifications()`), sự
   /// kiện của mọi thread đều đến. [roomId] chỉ dùng để lấy ACS token.
-  Stream<MessageModel> watchListMessages(String roomId);
+  Stream<MessageModel> watchListMessages();
 
   Future<void> stopWatching(String threadId);
 
   Future<void> stopWatchingList();
 
-  void sendReadMessage(String lastVisibleMessageId);
+  void sendReadMessage(String lastVisibleMessageId, {String? roomId});
 
   void clearReadMessageState();
 

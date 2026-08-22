@@ -112,7 +112,8 @@ class _VideoResourceThumbnailState extends State<VideoResourceThumbnail> {
       color: const Color(0xFF1D2939),
       child: Center(
         child: _hasError
-            ? const Icon(Icons.videocam_off_rounded, color: Colors.white54, size: 24)
+            ? const Icon(Icons.videocam_off_rounded,
+                color: Colors.white54, size: 24)
             : const SizedBox(
                 width: 18,
                 height: 18,

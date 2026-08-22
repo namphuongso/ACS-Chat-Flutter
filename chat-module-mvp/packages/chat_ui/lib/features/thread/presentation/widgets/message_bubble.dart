@@ -47,7 +47,8 @@ class MessageBubble extends ConsumerWidget {
       return const SizedBox.shrink();
     }
     if (message.content.trim().isEmpty &&
-        (message.metadata == null || message.metadata!.isEmpty)) {
+        (message.metadata == null || message.metadata!.isEmpty) &&
+        !message.isDeleted) {
       return const SizedBox.shrink();
     }
     if (message.type == MessageType.system) {
@@ -73,8 +74,42 @@ class MessageBubble extends ConsumerWidget {
         : (config.receivedTextColor ?? theme.colorScheme.onSurface);
 
     final mediaType = message.metadata?['type']?.toString().toLowerCase();
+    final hasImages =
+        (message.metadata?['images'] as List?)?.isNotEmpty == true;
+
+    final files = message.metadata?['files'] as List<dynamic>?;
+    Map<String, dynamic>? firstFileMap;
+    if (files != null && files.isNotEmpty && files.first is Map) {
+      firstFileMap = Map<String, dynamic>.from(files.first as Map);
+    }
+    final fileSizeRaw = message.metadata?['fileSize'] ??
+        message.metadata?['size'] ??
+        message.metadata?['length'] ??
+        message.metadata?['bytes'] ??
+        firstFileMap?['size'] ??
+        firstFileMap?['fileSize'] ??
+        firstFileMap?['length'] ??
+        firstFileMap?['bytes'];
+    final sizeBytes = (fileSizeRaw is int)
+        ? fileSizeRaw
+        : (int.tryParse(fileSizeRaw?.toString() ?? '') ?? 0);
+    final isOver100MB = sizeBytes > 100 * 1024 * 1024;
+
+    final isMediaMetadata = (mediaType == 'image' ||
+        mediaType == 'video' ||
+        hasImages) && !isOver100MB;
+
+    final rawContent = message.content.trim();
+    final isFallbackMediaText = rawContent == '[Hình ảnh]' ||
+        rawContent == '[Video]' ||
+        rawContent == '[Tệp tin]' ||
+        RegExp(r'^\[\d+\s+hình ảnh\]$').hasMatch(rawContent);
+
+    final hasUserText = rawContent.isNotEmpty && !isFallbackMediaText;
+
     final isMediaOnly = message.metadata != null &&
-        (mediaType == 'image' || mediaType == 'video') &&
+        isMediaMetadata &&
+        !hasUserText &&
         !message.isDeleted;
 
     final timeColor = isMediaOnly
@@ -131,9 +166,9 @@ class MessageBubble extends ConsumerWidget {
             ],
             if (message.isDeleted)
               Text(
-                '(tin nhắn đã bị xoá)',
+                '(Tin nhắn đã bị xoá)',
                 style: TextStyle(
-                  color: textColor,
+                  color: textColor.withValues(alpha: 0.85),
                   fontStyle: FontStyle.italic,
                 ),
               )
@@ -145,7 +180,7 @@ class MessageBubble extends ConsumerWidget {
                   url: _extractFirstUrl(message.content)!,
                   textColor: textColor,
                 ),
-              if (message.content.trim().isNotEmpty && mediaType == null)
+              if (hasUserText)
                 RichMessageText(
                   content: message.content,
                   style: TextStyle(color: textColor),
@@ -334,7 +369,8 @@ class MessageBubble extends ConsumerWidget {
     return match?.group(0);
   }
 
-  static bool _hasLinkInContent(String content, Map<String, dynamic>? metadata) {
+  static bool _hasLinkInContent(
+      String content, Map<String, dynamic>? metadata) {
     if (metadata != null && metadata['type'] == 'link') return false;
     return _extractFirstUrl(content) != null;
   }

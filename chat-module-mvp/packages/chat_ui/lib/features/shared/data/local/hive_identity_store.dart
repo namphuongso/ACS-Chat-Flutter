@@ -44,6 +44,24 @@ class HiveIdentityStore {
     return (v is String && v.isNotEmpty) ? v : null;
   }
 
+  String? getMyAcsUserIdSync(String userId) {
+    if (_unavailable) return null;
+    if (_box != null) {
+      final v = _box!.get(_key(userId));
+      return (v is String && v.isNotEmpty) ? v : null;
+    }
+    try {
+      if (Hive.isBoxOpen(_boxName)) {
+        _box = Hive.box<String>(_boxName);
+        final v = _box!.get(_key(userId));
+        return (v is String && v.isNotEmpty) ? v : null;
+      }
+    } catch (_) {
+      _unavailable = true;
+    }
+    return null;
+  }
+
   Future<void> setMyAcsUserId(String userId, String? value) async {
     final box = await _activeBox();
     if (box == null) return;

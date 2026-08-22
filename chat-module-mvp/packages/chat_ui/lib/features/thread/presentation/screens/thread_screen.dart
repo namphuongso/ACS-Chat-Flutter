@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:developer' as developer;
 
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter/material.dart';
@@ -15,13 +14,13 @@ import '../../../../core/chat_route_observer.dart' show chatRouteObserver;
 import '../../../../core/chat_ui_config.dart';
 import '../../../conversation_list/presentation/providers/conversation_providers.dart';
 import '../providers/thread_providers.dart';
-import '../notifiers/thread_messages_notifier.dart';
 import '../../../shared/presentation/providers/connectivity_providers.dart';
-import '../widgets/message_actions_sheet.dart';
+import '../widgets/message_action_button.dart';
+import '../widgets/reaction_picker_item.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/message_readers_sheet.dart';
-import '../widgets/pinned_messages_sheet.dart';
+import '../widgets/pinned_message_row.dart';
 import '../widgets/upload_error_listener.dart';
 import '../widgets/upload_progress_banner.dart';
 import 'room_settings_screen.dart';
@@ -49,17 +48,14 @@ class ThreadScreen extends StatefulWidget {
 }
 
 class _ThreadScreenState extends State<ThreadScreen> {
-  late final _overrides = [
-    roomIdProvider.overrideWithValue(widget.roomId),
-    threadIdProvider.overrideWithValue(widget.threadId),
-    currentUserIdProvider.overrideWithValue(widget.currentUserId),
-    threadMessagesProvider.overrideWith(ThreadMessagesNotifier.new),
-  ];
-
   @override
   Widget build(BuildContext context) {
     return ProviderScope(
-      overrides: _overrides,
+      overrides: [
+        roomIdProvider.overrideWithValue(widget.roomId),
+        threadIdProvider.overrideWithValue(widget.threadId),
+        currentUserIdProvider.overrideWithValue(widget.currentUserId),
+      ],
       child: _ThreadScreenContent(
         title: widget.title,
         currentUserId: widget.currentUserId,
@@ -145,7 +141,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     }
 
     final notifier = ref.read(threadMessagesProvider.notifier);
-    final messageCount = ref.read(threadMessagesProvider).length;
+    final messageCount = ref.read(threadMessagesProvider).messages.length;
     final maxIndex =
         positions.map((p) => p.index).reduce((a, b) => a > b ? a : b);
     if (messageCount > 0 &&
@@ -247,7 +243,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       return;
     }
 
-    final allMessages = ref.read(threadMessagesProvider);
+    final allMessages = ref.read(threadMessagesProvider).messages;
     var matches = _filterMessages(allMessages, trimmed);
 
     if (matches.isNotEmpty) {
@@ -283,14 +279,14 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     while (pagesFetched < 8 && !notifier.hasReachedEnd && mounted) {
       if (_searchSequence != currentSeq || !_isSearching) break;
 
-      final prevCount = ref.read(threadMessagesProvider).length;
+      final prevCount = ref.read(threadMessagesProvider).messages.length;
       await notifier.loadOlder();
-      final newCount = ref.read(threadMessagesProvider).length;
+      final newCount = ref.read(threadMessagesProvider).messages.length;
       pagesFetched++;
 
       if (!mounted || _searchSequence != currentSeq || !_isSearching) break;
 
-      final updatedMessages = ref.read(threadMessagesProvider);
+      final updatedMessages = ref.read(threadMessagesProvider).messages;
       matches = _filterMessages(updatedMessages, trimmed);
 
       if (matches.isNotEmpty) {
@@ -349,7 +345,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     final targetMessage = _searchResults[resultIndex];
     final notifier = ref.read(threadMessagesProvider.notifier);
 
-    var allMessages = ref.read(threadMessagesProvider);
+    var allMessages = ref.read(threadMessagesProvider).messages;
     var visible = _getVisibleMessages(allMessages);
     var index = visible.indexWhere((m) => m.id == targetMessage.id);
 
@@ -357,7 +353,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       final found =
           await notifier.loadUntilMessage(messageId: targetMessage.id);
       if (!found || !mounted) return;
-      allMessages = ref.read(threadMessagesProvider);
+      allMessages = ref.read(threadMessagesProvider).messages;
       visible = _getVisibleMessages(allMessages);
       index = visible.indexWhere((m) => m.id == targetMessage.id);
       if (index == -1) return;
@@ -481,10 +477,14 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
 
   @override
   void didPopNext() {
-    // Quay lại màn hình chat từ màn hình chi tiết/cài đặt
+    // Quay lại màn hình chat từ màn hình chi tiết/cài đặt/dialog
     if (mounted) {
       try {
-        ref.read(threadMessagesProvider.notifier).sendReadMessageIfNeeded();
+        final notifier = ref.read(threadMessagesProvider.notifier);
+        ref
+            .read(messageRepositoryProvider)
+            .watchNewMessages(notifier.roomId, notifier.threadId);
+        notifier.sendReadMessageIfNeeded();
       } catch (_) {}
     }
   }
@@ -500,7 +500,11 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     } else if (state == AppLifecycleState.resumed) {
       if (mounted) {
         try {
-          ref.read(threadMessagesProvider.notifier).sendReadMessageIfNeeded();
+          final notifier = ref.read(threadMessagesProvider.notifier);
+          ref
+              .read(messageRepositoryProvider)
+              .watchNewMessages(notifier.roomId, notifier.threadId);
+          notifier.sendReadMessageIfNeeded();
         } catch (_) {}
       }
     }
@@ -570,20 +574,6 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     return positions.any((p) => p.index == 0);
   }
 
-  String _normalizeAcsId(String id) {
-    if (id.startsWith('8:acs:')) {
-      return id.substring(6);
-    }
-    return id;
-  }
-
-  bool _isSameUser(String raw1, String raw2) {
-    if (raw1.isEmpty || raw2.isEmpty) return false;
-    final clean1 = raw1.startsWith('8:acs:') ? raw1.substring(6) : raw1;
-    final clean2 = raw2.startsWith('8:acs:') ? raw2.substring(6) : raw2;
-    return clean1.trim().toLowerCase() == clean2.trim().toLowerCase();
-  }
-
   bool _isCurrentUserCurrentlyRemoved(
     List<Message> messages,
     String currentUserId,
@@ -616,9 +606,9 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       final isSelfRemoved = metadata?['isSelf'] == true ||
           (eventType == 'MemberRemoved' &&
               removedUserId.isNotEmpty &&
-              (_isSameUser(removedUserId, currentUserId) ||
+              (AcsUserUtils.isSameAcsUser(removedUserId, currentUserId) ||
                   (myAcsUserId != null &&
-                      _isSameUser(removedUserId, myAcsUserId))));
+                      AcsUserUtils.isSameAcsUser(removedUserId, myAcsUserId))));
 
       if (isSelfRemoved) {
         return true;
@@ -627,13 +617,15 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       final isSelfJoined = eventType == 'MemberJoined' &&
           (addedUsers.any((u) =>
                   u is Map &&
-                  (_isSameUser((u['userId'] ?? '').toString(), currentUserId) ||
+                  (AcsUserUtils.isSameAcsUser(
+                          (u['userId'] ?? '').toString(), currentUserId) ||
                       (myAcsUserId != null &&
-                          _isSameUser(
+                          AcsUserUtils.isSameAcsUser(
                               (u['userId'] ?? '').toString(), myAcsUserId)))) ||
               addedUserIds.any((id) =>
-                  _isSameUser(id, currentUserId) ||
-                  (myAcsUserId != null && _isSameUser(id, myAcsUserId))));
+                  AcsUserUtils.isSameAcsUser(id, currentUserId) ||
+                  (myAcsUserId != null &&
+                      AcsUserUtils.isSameAcsUser(id, myAcsUserId))));
 
       if (isSelfJoined) {
         return false;
@@ -651,11 +643,11 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
           .where((c) => c.id == roomId)
           .firstOrNull;
       final members = conversation?.participants ?? const [];
-      final normSender = _normalizeAcsId(message.senderId);
+      final normSender = AcsUserUtils.normalizeAcsId(message.senderId);
       final senderMember = members.where((m) {
         if (m.id == message.senderId) return true;
         if (m.acsUserId != null &&
-            _normalizeAcsId(m.acsUserId!) == normSender) {
+            AcsUserUtils.normalizeAcsId(m.acsUserId!) == normSender) {
           return true;
         }
         return false;
@@ -697,11 +689,11 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       final summary = notifier.reactionSummaryFor(message.id);
       myReactionCode = summary?.myReactionCode;
       if (myReactionCode == null || myReactionCode.isEmpty) {
-        final myAcs = _normalizeAcsId(notifier.myAcsUserId ?? '');
-        final myUser = _normalizeAcsId(widget.currentUserId);
+        final myAcs = AcsUserUtils.normalizeAcsId(notifier.myAcsUserId ?? '');
+        final myUser = AcsUserUtils.normalizeAcsId(widget.currentUserId);
         myReactionCode = reactions
             .where((r) {
-              final rId = _normalizeAcsId(r.userId);
+              final rId = AcsUserUtils.normalizeAcsId(r.userId);
               return r.userId == widget.currentUserId ||
                   (myAcs.isNotEmpty && rId == myAcs) ||
                   rId == myUser;
@@ -713,9 +705,10 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     if (!mounted) return;
 
     final myAcsUserId = notifier.myAcsUserId;
-    final normSender = _normalizeAcsId(message.senderId);
+    final normSender = AcsUserUtils.normalizeAcsId(message.senderId);
     final isMe = message.senderId == widget.currentUserId ||
-        (myAcsUserId != null && normSender == _normalizeAcsId(myAcsUserId));
+        (myAcsUserId != null &&
+            normSender == AcsUserUtils.normalizeAcsId(myAcsUserId));
     final senderAvatar = isMe ? null : _getSenderAvatar(message);
 
     var hoveredReactionIndex = -1;
@@ -742,14 +735,14 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
               );
             } catch (_) {}
             if (!mounted) return;
-            showChatToast(
-              this.context,
-              message: ok
-                  ? (selected ? 'Đã gỡ cảm xúc' : 'Đã thả cảm xúc')
-                  : 'Không thể cập nhật cảm xúc',
-              isError: !ok,
-              config: config,
-            );
+            if (!ok) {
+              showChatToast(
+                this.context,
+                message: 'Không thể cập nhật cảm xúc',
+                isError: true,
+                config: config,
+              );
+            }
           }
 
           return Material(
@@ -768,14 +761,17 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                   // 1. Center/Appear Area: Floating Reaction Bar + Target Message Bubble (Nằm ngoài BottomSheet)
                   Align(
                     alignment: Alignment.center,
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 24),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: isMe
-                            ? CrossAxisAlignment.end
-                            : CrossAxisAlignment.start,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onTap: () => Navigator.pop(dialogContext),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: isMe
+                              ? CrossAxisAlignment.end
+                              : CrossAxisAlignment.start,
                         children: [
                           // Reaction Bar (Khung thả cảm xúc dạng floating pill)
                           if (reactionConfigs.isNotEmpty)
@@ -861,6 +857,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                       ),
                     ),
                   ),
+                ),
 
                   // 2. Bottom Area: Action Sheet hiển thị dạng BottomSheet ở đáy (Chứa 4 nút icon tròn ban đầu)
                   Align(
@@ -920,7 +917,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                                 label: 'Khác',
                                 iconColor: primary,
                                 onTap: () async {
-                                  developer.log(
+                                  ChatLogger.log(
                                       '[MessageAction] Tapped Khác option button');
                                   Navigator.pop(dialogContext);
                                   await Future.delayed(
@@ -952,7 +949,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
         config.primaryActionColor ?? config.iconColor ?? Colors.blue;
     final roomId = ref.read(roomIdProvider);
 
-    developer.log(
+    ChatLogger.log(
         '[MessageAction] Opening _showMoreOptionsMenu for messageId=${message.id}, roomId=$roomId');
 
     showModalBottomSheet<void>(
@@ -985,7 +982,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                 ),
                 title: Text(message.pin ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'),
                 onTap: () {
-                  developer.log('[MessageAction] Tapped Ghim/Bỏ ghim option');
+                  ChatLogger.log('[MessageAction] Tapped Ghim/Bỏ ghim option');
                   Navigator.pop(sheetContext);
                   _togglePin(messenger, message.id, !message.pin);
                 },
@@ -997,16 +994,16 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                 ),
                 title: const Text('Danh sách người xem'),
                 onTap: () async {
-                  developer
-                      .log('[MessageAction] Tapped Danh sách người xem option');
+                  ChatLogger.log(
+                      '[MessageAction] Tapped Danh sách người xem option');
                   Navigator.pop(sheetContext);
                   await Future.delayed(const Duration(milliseconds: 100));
                   if (!parentContext.mounted) {
-                    developer.log(
+                    ChatLogger.log(
                         '[MessageAction] parentContext is no longer mounted!');
                     return;
                   }
-                  developer.log(
+                  ChatLogger.log(
                       '[MessageAction] Showing MessageReadersSheet for roomId=$roomId, messageId=${message.id}');
                   MessageReadersSheet.show(
                     context: parentContext,
@@ -1127,9 +1124,11 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                     itemBuilder: (_, index) {
                       final reaction = reactions[index];
                       final avatar = reaction.avatarUrl;
-                      final myAcs = _normalizeAcsId(notifier.myAcsUserId ?? '');
-                      final myUser = _normalizeAcsId(widget.currentUserId);
-                      final rId = _normalizeAcsId(reaction.userId);
+                      final myAcs = AcsUserUtils.normalizeAcsId(
+                          notifier.myAcsUserId ?? '');
+                      final myUser =
+                          AcsUserUtils.normalizeAcsId(widget.currentUserId);
+                      final rId = AcsUserUtils.normalizeAcsId(reaction.userId);
                       final isMeReaction =
                           reaction.userId == widget.currentUserId ||
                               (myAcs.isNotEmpty && rId == myAcs) ||
@@ -1234,7 +1233,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
 
   @override
   Widget build(BuildContext context) {
-    final messages = ref.watch(threadMessagesProvider);
+    final messages = ref.watch(threadMessagesProvider).messages;
     final notifier = ref.read(threadMessagesProvider.notifier);
     final roomId = ref.watch(roomIdProvider);
     final myId = notifier.myAcsUserId;
@@ -1261,15 +1260,17 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       }
     });
 
-    ref.listen<List<Message>>(threadMessagesProvider, (previous, next) {
-      if (next.isEmpty) return;
+    ref.listen<ThreadState>(threadMessagesProvider, (previous, next) {
+      final previousMessages = previous?.messages ?? const <Message>[];
+      final nextMessages = next.messages;
+      if (nextMessages.isEmpty) return;
 
-      final isCurrentlyRemoved = (previous == null || previous.isEmpty)
+      final isCurrentlyRemoved = previousMessages.isEmpty
           ? _isCurrentUserCurrentlyRemoved(
-              next, widget.currentUserId, notifier.myAcsUserId)
-          : (next.length > previous.length &&
+              nextMessages, widget.currentUserId, notifier.myAcsUserId)
+          : (nextMessages.length > previousMessages.length &&
               _isCurrentUserCurrentlyRemoved(
-                next.sublist(previous.length),
+                nextMessages.sublist(previousMessages.length),
                 widget.currentUserId,
                 notifier.myAcsUserId,
               ));
@@ -1277,7 +1278,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       if (isCurrentlyRemoved && mounted) {
         final chatConfig = ref.read(chatUiConfigProvider);
         final isDisbanded =
-            next.any((m) => m.type == MessageType.roomDisbanded);
+            nextMessages.any((m) => m.type == MessageType.roomDisbanded);
         showChatToast(
           context,
           message: isDisbanded
@@ -1294,27 +1295,22 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
         return;
       }
 
-      if (previous == null || previous.isEmpty) return;
-      if (next.length > previous.length) {
-        final lastMsg = next.last;
+      if (previousMessages.isEmpty) return;
+      if (nextMessages.length > previousMessages.length) {
+        final lastMsg = nextMessages.last;
         final isBrandNewMessageAtBottom =
-            !previous.any((m) => m.id == lastMsg.id);
+            !previousMessages.any((m) => m.id == lastMsg.id);
         if (!isBrandNewMessageAtBottom) {
           // Chỉ là tải lịch sử tin nhắn cũ hơn — không phải tin mới ở đáy.
           return;
         }
 
-        final newCount = next.length - previous.length;
-        String normalize(String id) {
-          if (id.startsWith('8:acs:')) {
-            return id.substring(6);
-          }
-          return id;
-        }
+        final newCount = nextMessages.length - previousMessages.length;
 
         final isMsgMe = myId != null &&
             myId.isNotEmpty &&
-            normalize(lastMsg.senderId) == normalize(myId);
+            AcsUserUtils.normalizeAcsId(lastMsg.senderId) ==
+                AcsUserUtils.normalizeAcsId(myId);
 
         if (isMsgMe) {
           // Tin nhắn do chính mình gửi → tự động cuộn xuống dưới cùng
@@ -1369,9 +1365,6 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       }
       if (message.content.trim().isEmpty &&
           (message.metadata == null || message.metadata!.isEmpty)) {
-        return false;
-      }
-      if (!isGroupConversation && message.type == MessageType.system) {
         return false;
       }
       return true;
@@ -1666,7 +1659,8 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                     final found =
                         await notifier.loadUntilMessage(messageId: id);
                     if (found) {
-                      final newMessages = ref.read(threadMessagesProvider);
+                      final newMessages =
+                          ref.read(threadMessagesProvider).messages;
                       final newIndex =
                           newMessages.indexWhere((m) => m.id == id);
                       if (newIndex != -1) {
@@ -1780,19 +1774,17 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
 
                                 final message = visibleMessages[
                                     visibleMessages.length - 1 - index];
-                                if (message.isDeleted) {
-                                  return const SizedBox.shrink();
-                                }
 
                                 String getSenderKey(Message m) {
                                   final normSender =
-                                      _normalizeAcsId(m.senderId);
+                                      AcsUserUtils.normalizeAcsId(m.senderId);
                                   if (conversation != null) {
                                     final member =
                                         conversation.participants.where((p) {
                                       if (p.id == m.senderId) return true;
                                       if (p.acsUserId != null &&
-                                          _normalizeAcsId(p.acsUserId!) ==
+                                          AcsUserUtils.normalizeAcsId(
+                                                  p.acsUserId!) ==
                                               normSender) {
                                         return true;
                                       }
@@ -1812,37 +1804,68 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                                 }
 
                                 ChatUser? senderMember;
+                                ChatUser? myParticipant;
                                 if (conversation != null) {
                                   senderMember =
                                       conversation.participants.where((p) {
-                                    return _isSameUser(
+                                    return AcsUserUtils.isSameAcsUser(
                                             message.senderId, p.id) ||
-                                        _isSameUser(message.senderId,
+                                        AcsUserUtils.isSameAcsUser(
+                                            message.senderId,
                                             p.acsUserId ?? '');
+                                  }).firstOrNull;
+
+                                  myParticipant =
+                                      conversation.participants.where((p) {
+                                    return AcsUserUtils.isSameAcsUser(
+                                            p.id, widget.currentUserId) ||
+                                        (myId != null &&
+                                            myId.isNotEmpty &&
+                                            AcsUserUtils.isSameAcsUser(
+                                                p.acsUserId ?? '', myId));
                                   }).firstOrNull;
                                 }
 
-                                final bool isMe = (senderMember != null)
-                                    ? (_isSameUser(senderMember.id, widget.currentUserId) ||
-                                        _isSameUser(senderMember.acsUserId ?? '', myId ?? '') ||
-                                        _isSameUser(senderMember.id, myId ?? ''))
-                                    : (_isSameUser(message.senderId, widget.currentUserId) ||
-                                        _isSameUser(message.senderId, myId ?? ''));
+                                final effectiveMyAcsUserId =
+                                    (myId != null && myId.isNotEmpty)
+                                        ? myId
+                                        : myParticipant?.acsUserId;
+
+                                final bool isMe = AcsUserUtils.isSameAcsUser(
+                                        message.senderId, widget.currentUserId) ||
+                                    (effectiveMyAcsUserId != null &&
+                                        AcsUserUtils.isSameAcsUser(
+                                            message.senderId,
+                                            effectiveMyAcsUserId)) ||
+                                    (senderMember != null &&
+                                        (AcsUserUtils.isSameAcsUser(
+                                                senderMember.id,
+                                                widget.currentUserId) ||
+                                            (effectiveMyAcsUserId != null &&
+                                                AcsUserUtils.isSameAcsUser(
+                                                    senderMember.acsUserId ??
+                                                        '',
+                                                    effectiveMyAcsUserId))));
 
                                 String? senderAvatar;
                                 if (!isMe) {
-                                  if (senderMember != null && isNetworkAvatar(senderMember.avatarUrl)) {
+                                  if (senderMember != null &&
+                                      isNetworkAvatar(senderMember.avatarUrl)) {
                                     senderAvatar = senderMember.avatarUrl;
                                   } else {
-                                    final cached = notifier.getAvatarUrlForUser(message.senderId);
-                                    if (cached != null && isNetworkAvatar(cached)) {
+                                    final cached = notifier
+                                        .getAvatarUrlForUser(message.senderId);
+                                    if (cached != null &&
+                                        isNetworkAvatar(cached)) {
                                       senderAvatar = cached;
                                     } else {
-                                      final metaAvatar = message.metadata?['senderAvatarUrl'] ??
+                                      final metaAvatar = message
+                                              .metadata?['senderAvatarUrl'] ??
                                           message.metadata?['avatarUrl'] ??
                                           message.metadata?['senderAvatar'] ??
                                           message.metadata?['userAvatarUrl'];
-                                      if (isNetworkAvatar(metaAvatar?.toString())) {
+                                      if (isNetworkAvatar(
+                                          metaAvatar?.toString())) {
                                         senderAvatar = metaAvatar.toString();
                                       } else {
                                         senderAvatar = isGroupConversation
@@ -1870,8 +1893,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                                     ..write(' isMe=$isMe')
                                     ..write(
                                         ' convFound=${conversation != null}');
-                                  developer.log('thread-screen-isMe $dbg',
-                                      name: 'ChatModule');
+                                  ChatLogger.log('thread-screen-isMe $dbg');
                                 }
                                 final currentSenderKey = getSenderKey(message);
                                 final bool isFollowUpOfSameSender =
@@ -2230,7 +2252,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                                 await notifier.loadUntilMessage(messageId: id);
                             if (found && mounted) {
                               final newMessages =
-                                  ref.read(threadMessagesProvider);
+                                  ref.read(threadMessagesProvider).messages;
                               final newIndex =
                                   newMessages.indexWhere((m) => m.id == id);
                               if (newIndex != -1) {
@@ -2260,4 +2282,3 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     );
   }
 }
-

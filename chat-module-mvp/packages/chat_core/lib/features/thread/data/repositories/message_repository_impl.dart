@@ -202,10 +202,13 @@ class MessageRepositoryImpl implements MessageRepository {
     final local = _local;
     if (success && local != null) {
       try {
-        // Xoá khỏi cache luôn để tin đã xoá không hiện lại ở lần vào sau.
+        // Cập nhật deletedOn trong cache để giữ tin soft-delete
         final cached = await local.getCachedMessages(threadId);
-        await local.saveMessages(
-            threadId, cached.where((m) => m.id != messageId).toList());
+        final updated = cached
+            .map((m) =>
+                m.id == messageId ? m.copyWith(deletedOn: DateTime.now()) : m)
+            .toList();
+        await local.saveMessages(threadId, updated);
       } catch (_) {}
     }
     return success;
@@ -315,8 +318,8 @@ class MessageRepositoryImpl implements MessageRepository {
       _realtime.stopWatching(threadId);
 
   @override
-  Stream<Message> watchListMessages(String roomId) {
-    final stream = _realtime.watchListMessages(roomId);
+  Stream<Message> watchListMessages() {
+    final stream = _realtime.watchListMessages();
     if (_local == null) return stream;
     return stream.map((message) {
       unawaited(_appendToCache(message.threadId, message));
@@ -328,8 +331,8 @@ class MessageRepositoryImpl implements MessageRepository {
   Future<void> stopWatchingList() => _realtime.stopWatchingList();
 
   @override
-  void sendReadMessage(String lastVisibleMessageId) =>
-      _realtime.sendReadMessage(lastVisibleMessageId);
+  void sendReadMessage(String lastVisibleMessageId, {String? roomId}) =>
+      _realtime.sendReadMessage(lastVisibleMessageId, roomId: roomId);
 
   @override
   void clearReadMessageState() => _realtime.clearReadMessageState();

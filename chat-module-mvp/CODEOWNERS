@@ -1,8 +1,5 @@
 # Toàn bộ repo mặc định
 *                                          @owner-username
 
-# Phần native cần review kỹ hơn do rủi ro app size / crash native
-packages/chat_native_platform_interface/  @owner-username
-
 # domain layer là hợp đồng (contract) — đổi ở đây ảnh hưởng mọi consumer
 packages/chat_core/lib/domain/            @owner-username

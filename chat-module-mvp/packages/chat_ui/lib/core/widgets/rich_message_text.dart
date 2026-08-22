@@ -10,7 +10,7 @@ class _Seg {
   final TextStyle style;
 }
 
-class RichMessageText extends StatelessWidget {
+class RichMessageText extends StatefulWidget {
   const RichMessageText({
     super.key,
     required this.content,
@@ -20,6 +20,11 @@ class RichMessageText extends StatelessWidget {
   final String content;
   final TextStyle style;
 
+  @override
+  State<RichMessageText> createState() => _RichMessageTextState();
+}
+
+class _RichMessageTextState extends State<RichMessageText> {
   static final _tagRegex = RegExp(r'<[a-zA-Z][^>]*>');
   static final _urlRegex = RegExp(r'(https?://[^\s<]+)');
 
@@ -33,29 +38,45 @@ class RichMessageText extends StatelessWidget {
     7: 30,
   };
 
+  final List<TapGestureRecognizer> _recognizers = [];
+
+  @override
+  void dispose() {
+    _clearRecognizers();
+    super.dispose();
+  }
+
+  void _clearRecognizers() {
+    for (final r in _recognizers) {
+      r.dispose();
+    }
+    _recognizers.clear();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final text = _maybeUnescape(content);
+    _clearRecognizers();
+    final text = _maybeUnescape(widget.content);
     if (!_tagRegex.hasMatch(text)) {
-      return _buildPlainTextWithLinks(text, style);
+      return _buildPlainTextWithLinks(text, widget.style);
     }
 
     final doc = html_parser.parse(text);
     final bodyNodes = doc.body?.nodes ?? const <dom.Node>[];
     final segs = <_Seg>[];
     for (final node in bodyNodes) {
-      final childSegs = _walk(node, style, 0);
+      final childSegs = _walk(node, widget.style, 0);
       if (childSegs.isEmpty) continue;
       final isBlock =
           node is dom.Element && _isBlockTag(node.localName?.toLowerCase());
       if (isBlock && segs.isNotEmpty && !segs.last.text.endsWith('\n')) {
-        segs.add(_Seg('\n', style.copyWith(decoration: TextDecoration.none)));
+        segs.add(_Seg('\n', widget.style.copyWith(decoration: TextDecoration.none)));
       }
       segs.addAll(childSegs);
     }
 
     final spans = segs.isEmpty ? [TextSpan(text: text)] : _buildSpans(segs);
-    return Text.rich(TextSpan(children: spans), style: style);
+    return Text.rich(TextSpan(children: spans), style: widget.style);
   }
 
   List<TextSpan> _buildSpans(List<_Seg> segs) {
@@ -402,7 +423,7 @@ class RichMessageText extends StatelessWidget {
 
   TextStyle _addDecoration(TextStyle currentStyle, TextDecoration added) {
     final merged = _mergeDecoration(currentStyle.decoration, added);
-    final color = currentStyle.color ?? style.color;
+    final color = currentStyle.color ?? widget.style.color;
     return currentStyle.copyWith(
       decoration: merged,
       decorationColor: color,
@@ -548,6 +569,7 @@ class RichMessageText extends StatelessWidget {
             await launchUrl(uri, mode: LaunchMode.externalApplication);
           }
         };
+      _recognizers.add(recognizer);
 
       spans.add(TextSpan(
         text: urlText,

@@ -37,6 +37,7 @@ class _ConversationListState extends ConsumerState<ConversationList>
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_maybeLoadMore);
     Future.microtask(() {
       if (mounted) {
         ref.read(globalCurrentUserIdProvider.notifier).setUserId(widget.currentUserId);
@@ -69,7 +70,6 @@ class _ConversationListState extends ConsumerState<ConversationList>
     if (route != null) {
       chatRouteObserver.subscribe(this, route);
     }
-    _scrollController.addListener(_maybeLoadMore);
   }
 
   @override

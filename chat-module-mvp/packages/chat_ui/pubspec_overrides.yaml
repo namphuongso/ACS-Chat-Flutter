@@ -1,6 +1,3 @@
-# melos_managed_dependency_overrides: chat_core,chat_native_platform_interface
 dependency_overrides:
   chat_core:
     path: ../chat_core
-  chat_native_platform_interface:
-    path: ../chat_native_platform_interface

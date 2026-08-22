@@ -166,14 +166,16 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
                       if (isGroup) _buildMemberRow(uiConfig),
                     ],
                   ),
-                  const SizedBox(height: 2),
-                  RoomDangerZone(
-                    config: uiConfig,
-                    isGroup: isGroup,
-                    isAdmin: _isAdmin,
-                    onLeaveTap: _showLeaveGroupConfirmDialog,
-                    onDisbandTap: _showDisbandGroupConfirmDialog,
-                  ),
+                  if (isGroup) ...[
+                    const SizedBox(height: 2),
+                    RoomDangerZone(
+                      config: uiConfig,
+                      isGroup: isGroup,
+                      isAdmin: _isAdmin,
+                      onLeaveTap: _showLeaveGroupConfirmDialog,
+                      onDisbandTap: _showDisbandGroupConfirmDialog,
+                    ),
+                  ],
                   const SizedBox(height: 24),
                 ],
               ),
@@ -181,41 +183,6 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
     );
   }
 
-
-
-  // Widget _buildGroupInfoRows(ChatUiConfig config) {
-  //   final iconColor = config.actionIconColor ?? Colors.blueGrey;
-  //   final rows = [
-  //     (Icons.info_outline, 'Thêm mô tả nhóm'),
-  //     (Icons.event_outlined, 'Lịch nhóm'),
-  //     (Icons.push_pin_outlined, 'Tin nhắn đã ghim'),
-  //     (Icons.poll_outlined, 'Bình chọn'),
-  //   ];
-  //   return Padding(
-  //     padding: const EdgeInsets.only(top: 8),
-  //     child: Material(
-  //       color: config.surfaceColor ?? Colors.white,
-  //       child: Column(
-  //         children: [
-  //           for (final row in rows)
-  //             ListTile(
-  //               leading: Icon(row.$1, color: iconColor, size: 28),
-  //               title: Text(row.$2, style: const TextStyle(fontSize: 16)),
-  //               trailing: Icon(Icons.chevron_right, color: iconColor),
-  //               onTap: () => showChatFeatureComingSoon(
-  //                 context,
-  //                 feature: row.$2,
-  //                 config: config,
-  //               ),
-  //             ),
-  //         ],
-  //       ),
-  //     ),
-  //   );
-  // }
-
-  /// Khối tùy chọn cho phòng 1-1: tắt thông báo (đang phát triển),
-  /// ghim hội thoại và tạo cuộc trò chuyện (tạo nhóm với người này).
   Widget _buildDirectRoomOptions(ChatUiConfig config) {
     final iconColor = config.actionIconColor ?? Colors.black87;
     final conversations = ref.watch(conversationListProvider);
@@ -414,8 +381,6 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
     }
   }
 
-
-
   Future<void> _pickAndUpdateRoomAvatar() async {
     final result = await FilePicker.pickFiles(
       type: FileType.image,
@@ -518,8 +483,6 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
       ),
     );
   }
-
-
 
   Future<void> _showEditRoomInfoDialog() async {
     final name = await showChatTextInputDialog(

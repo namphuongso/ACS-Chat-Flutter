@@ -4,11 +4,30 @@ import 'dart:developer' as developer;
 /// Logger tiện ích cho Chat Module: tự động format JSON đẹp (pretty print) cho các request / response HTTP.
 class ChatLogger {
   static const _encoder = JsonEncoder.withIndent('  ');
-  static bool enabled = const bool.fromEnvironment('CHAT_DEBUG_LOG', defaultValue: false);
+  static bool enabled =
+      const bool.fromEnvironment('CHAT_DEBUG_LOG', defaultValue: false);
 
   static void log(String message, {String tag = 'ChatModule'}) {
     if (!enabled) return;
     developer.log(message, name: tag);
+  }
+
+  /// Cảnh báo (đường dẫn lỗi dự kiến được — vd fallback, retry).
+  static void warn(String message, {Object? error, String tag = 'ChatModule'}) {
+    if (!enabled) return;
+    developer.log(message, name: tag, level: 900, error: error);
+  }
+
+  /// Lỗi thật sự (kèm error/stackTrace để debug).
+  static void error(
+    String message, {
+    Object? error,
+    StackTrace? stackTrace,
+    String tag = 'ChatModule',
+  }) {
+    if (!enabled) return;
+    developer.log(message,
+        name: tag, level: 1000, error: error, stackTrace: stackTrace);
   }
 
   static Map<String, String> _sanitizeHeaders(Map<String, String>? headers) {

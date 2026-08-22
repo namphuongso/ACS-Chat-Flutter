@@ -20,6 +20,8 @@ class RoomDangerZone extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!isGroup) return const SizedBox.shrink();
+
     final danger = config.dangerColor ?? Colors.redAccent;
 
     return Padding(
@@ -40,7 +42,7 @@ class RoomDangerZone extends StatelessWidget {
               ),
               onTap: onLeaveTap,
             ),
-            if (isGroup && isAdmin) ...[
+            if (isAdmin) ...[
               const Divider(height: 1, indent: 16, color: Color(0xFFF2F4F7)),
               ListTile(
                 leading: Icon(Icons.delete_outline, color: danger, size: 28),
