@@ -300,8 +300,14 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
           ) ??
           'Thông tin nhóm đã được cập nhật';
 
+      final eventId = (data['id'] ??
+              data['eventId'] ??
+              payload['id'] ??
+              payload['eventId'] ??
+              'room_updated_${DateTime.now().millisecondsSinceEpoch}')
+          .toString();
       final signal = MessageModel(
-        id: 'room_updated_${DateTime.now().millisecondsSinceEpoch}',
+        id: eventId,
         threadId: targetId,
         senderId: '',
         senderDisplayName: actorName,
@@ -310,6 +316,7 @@ class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
         createdAt: DateTime.now(),
         metadata: {
           'eventType': 'RoomUpdated',
+          'id': eventId,
           'roomName': roomName,
           'avatarUrl': avatarUrl,
           'actorName': actorName,

@@ -9,8 +9,21 @@
 /// Tên người tham gia được resolve theo chuỗi fallback field khác nhau tuỳ
 /// backend; caller có thể truyền thêm fallback đã resolve từ state phòng
 /// (vd `_getDisplayName`) qua [actorFallback]/[targetFallback].
+typedef SystemMessageCustomResolver = String? Function({
+  required String eventType,
+  Map<String, dynamic> json,
+  Map<String, dynamic> payload,
+  String actorFallback,
+  String targetFallback,
+  List<String> joinedUserFallbacks,
+  bool isSelfRemoved,
+});
+
 class SystemMessageTextBuilder {
   const SystemMessageTextBuilder._();
+
+  /// Hook tuỳ biến ngôn ngữ / bản dịch chuỗi thông báo hệ thống từ host app.
+  static SystemMessageCustomResolver? customResolver;
 
   /// Sinh câu hiển thị cho [eventType]. Trả về `null` nếu eventType không
   /// thuộc loại đã biết (caller tự quyết fallback).
@@ -23,6 +36,18 @@ class SystemMessageTextBuilder {
     List<String> joinedUserFallbacks = const [],
     bool isSelfRemoved = false,
   }) {
+    if (customResolver != null) {
+      final custom = customResolver!(
+        eventType: eventType,
+        json: json,
+        payload: payload,
+        actorFallback: actorFallback,
+        targetFallback: targetFallback,
+        joinedUserFallbacks: joinedUserFallbacks,
+        isSelfRemoved: isSelfRemoved,
+      );
+      if (custom != null) return custom;
+    }
     final normalized = eventType.trim().toLowerCase();
     switch (normalized) {
       case 'roomownershiptransferred':
@@ -266,17 +291,25 @@ class SystemMessageTextBuilder {
       json['updatedByName'],
       actorFallback,
     ]);
-    final typeHint = payload['type']?.toString().toLowerCase() ?? '';
-    final isAvatarChanged = payload['isAvatarChanged'] == true ||
-        payload['avatarChanged'] == true ||
-        payload['isAvatarUpdated'] == true ||
-        json['isAvatarChanged'] == true ||
-        typeHint.contains('avatar');
-    final isNameChanged = payload['isNameChanged'] == true ||
-        payload['nameChanged'] == true ||
-        payload['isNameUpdated'] == true ||
-        json['isNameChanged'] == true ||
-        typeHint.contains('name');
+    final updateType = _firstTrimmed([
+      payload['updateType'],
+      json['updateType'],
+      payload['type'],
+      json['type'],
+    ]).toLowerCase();
+
+    final isAvatarChanged = updateType.contains('avatar') ||
+        (updateType.isEmpty &&
+            (payload['isAvatarChanged'] == true ||
+                payload['avatarChanged'] == true ||
+                payload['isAvatarUpdated'] == true ||
+                json['isAvatarChanged'] == true));
+    final isNameChanged = updateType.contains('name') ||
+        (updateType.isEmpty &&
+            (payload['isNameChanged'] == true ||
+                payload['nameChanged'] == true ||
+                payload['isNameUpdated'] == true ||
+                json['isNameChanged'] == true));
 
     if (isNameChanged && isAvatarChanged) {
       return actor.isNotEmpty

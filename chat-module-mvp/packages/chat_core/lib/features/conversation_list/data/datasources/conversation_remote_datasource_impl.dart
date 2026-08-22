@@ -10,6 +10,7 @@ import '../../../../core/error/chat_api_exception.dart';
 import '../../../../core/network/json_api_client.dart';
 import '../../../../core/utils/chat_logger.dart';
 import '../../../auth_token/domain/repositories/chat_auth_token_provider.dart';
+import '../../domain/entities/room_update_type.dart';
 import '../models/conversation_model.dart';
 import 'conversation_remote_datasource.dart';
 
@@ -146,11 +147,28 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
   }
 
   @override
+  Future<List<RoomUpdateType>> getRoomUpdateTypes() async {
+    final appToken = await _appTokenProvider.getAppToken();
+    final data = await _api.get(
+      ChatApiEndpoints.getRoomUpdateTypes,
+      appToken: appToken,
+    );
+    if (data is List) {
+      return data
+          .whereType<Map<String, dynamic>>()
+          .map(RoomUpdateType.fromJson)
+          .toList();
+    }
+    return const [];
+  }
+
+  @override
   Future<bool> updateRoomInfo({
     required String roomId,
     required String roomName,
     String? avatarUrl,
     required String roomType,
+    String? updateType,
   }) async {
     final appToken = await _appTokenProvider.getAppToken();
     final data = await _api.put(
@@ -161,6 +179,8 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
         'roomName': roomName,
         if (avatarUrl != null) 'avatarUrl': avatarUrl,
         'roomType': roomType,
+        if (updateType != null && updateType.isNotEmpty)
+          'updateType': updateType,
       },
     );
     return data != false;

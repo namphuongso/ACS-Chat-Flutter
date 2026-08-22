@@ -67,11 +67,28 @@ class _MockConversationRemote implements ConversationRemoteDataSource {
   }
 
   @override
+  Future<List<RoomUpdateType>> getRoomUpdateTypes() async {
+    return const [
+      RoomUpdateType(
+        id: '1',
+        code: 'Name',
+        name: 'Cập nhật tên phòng',
+      ),
+      RoomUpdateType(
+        id: '2',
+        code: 'Avatar',
+        name: 'Cập nhật ảnh đại diện',
+      ),
+    ];
+  }
+
+  @override
   Future<bool> updateRoomInfo({
     required String roomId,
     required String roomName,
     String? avatarUrl,
     required String roomType,
+    String? updateType,
   }) async {
     return true;
   }

@@ -147,18 +147,41 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         final payload = (itemData['payload'] is Map)
             ? Map<String, dynamic>.from(itemData['payload'] as Map)
             : <String, dynamic>{};
-        final roomName = (payload['roomName'] ?? itemData['roomName'] ?? '').toString().trim();
-        final avatarUrl = (payload['avatarUrl'] ?? itemData['avatarUrl'] ?? '').toString().trim();
+        final updateType =
+            (payload['updateType'] ?? itemData['updateType'] ?? '')
+                .toString()
+                .trim()
+                .toLowerCase();
 
-        if (nextPayload != null) {
-          final nextRoomName = (nextPayload['roomName'] ?? '').toString().trim();
-          final nextAvatarUrl = (nextPayload['avatarUrl'] ?? '').toString().trim();
-          final nameChanged = roomName.isNotEmpty && nextRoomName.isNotEmpty && roomName != nextRoomName;
-          final avatarChanged = avatarUrl != nextAvatarUrl && (avatarUrl.isNotEmpty || nextAvatarUrl.isNotEmpty);
+        if (updateType.contains('name')) {
+          payload['isNameChanged'] = true;
+        } else if (updateType.contains('avatar')) {
+          payload['isAvatarChanged'] = true;
+        } else if (updateType.contains('all')) {
+          payload['isNameChanged'] = true;
+          payload['isAvatarChanged'] = true;
+        } else if (nextPayload != null) {
+          final roomName =
+              (payload['roomName'] ?? itemData['roomName'] ?? '').toString().trim();
+          final avatarUrl =
+              (payload['avatarUrl'] ?? itemData['avatarUrl'] ?? '').toString().trim();
+          final nextRoomName =
+              (nextPayload['roomName'] ?? '').toString().trim();
+          final nextAvatarUrl =
+              (nextPayload['avatarUrl'] ?? '').toString().trim();
+          final nameChanged = roomName.isNotEmpty &&
+              nextRoomName.isNotEmpty &&
+              roomName != nextRoomName;
+          final avatarChanged = avatarUrl != nextAvatarUrl &&
+              (avatarUrl.isNotEmpty || nextAvatarUrl.isNotEmpty);
 
           if (nameChanged) payload['isNameChanged'] = true;
           if (avatarChanged) payload['isAvatarChanged'] = true;
         } else {
+          final roomName =
+              (payload['roomName'] ?? itemData['roomName'] ?? '').toString().trim();
+          final avatarUrl =
+              (payload['avatarUrl'] ?? itemData['avatarUrl'] ?? '').toString().trim();
           if (roomName.isNotEmpty && avatarUrl.isEmpty) {
             payload['isNameChanged'] = true;
           } else if (avatarUrl.isNotEmpty && roomName.isEmpty) {

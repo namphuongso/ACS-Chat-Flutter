@@ -1,5 +1,6 @@
 import '../../../../core/domain/entities/chat_member.dart';
 import '../../domain/entities/conversation.dart';
+import '../../domain/entities/room_update_type.dart';
 import '../../domain/repositories/conversation_repository.dart';
 import '../datasources/conversation_local_datasource.dart';
 import '../datasources/conversation_remote_datasource.dart';
@@ -120,17 +121,24 @@ class ConversationRepositoryImpl implements ConversationRepository {
   }
 
   @override
+  Future<List<RoomUpdateType>> getRoomUpdateTypes() async {
+    return await _dataSource.getRoomUpdateTypes();
+  }
+
+  @override
   Future<bool> updateRoomInfo({
     required String roomId,
     required String roomName,
     String? avatarUrl,
     required String roomType,
+    String? updateType,
   }) async {
     final result = await _dataSource.updateRoomInfo(
       roomId: roomId,
       roomName: roomName,
       avatarUrl: avatarUrl,
       roomType: roomType,
+      updateType: updateType,
     );
     final local = _local;
     if (local != null && result) {

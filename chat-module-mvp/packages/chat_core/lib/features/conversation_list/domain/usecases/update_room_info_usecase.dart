@@ -9,11 +9,13 @@ class UpdateRoomInfoUseCase {
     required String roomName,
     String? avatarUrl,
     required String roomType,
+    String? updateType,
   }) =>
       _repository.updateRoomInfo(
         roomId: roomId,
         roomName: roomName,
         avatarUrl: avatarUrl,
         roomType: roomType,
+        updateType: updateType,
       );
 }

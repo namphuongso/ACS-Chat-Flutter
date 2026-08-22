@@ -1,4 +1,5 @@
 import '../../../../core/data/models/chat_member_model.dart';
+import '../../domain/entities/room_update_type.dart';
 import '../models/conversation_model.dart';
 
 /// Kết quả phân trang dạng record — datasource chỉ làm việc với Model,
@@ -21,11 +22,14 @@ abstract class ConversationRemoteDataSource {
 
   Future<List<ChatMemberModel>> getMembers(String roomId);
 
+  Future<List<RoomUpdateType>> getRoomUpdateTypes();
+
   Future<bool> updateRoomInfo({
     required String roomId,
     required String roomName,
     String? avatarUrl,
     required String roomType,
+    String? updateType,
   });
 
   Future<int> addParticipants({

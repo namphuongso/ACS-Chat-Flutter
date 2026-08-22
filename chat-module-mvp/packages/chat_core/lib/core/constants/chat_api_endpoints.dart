@@ -13,6 +13,7 @@ abstract final class ChatApiEndpoints {
 
   // Group & Member Management (BE)
   static String getMembers(String roomId) => '/api/chat/get-members/$roomId';
+  static const getRoomUpdateTypes = '/api/chat/get-room-update-types';
   static const updateRoomInfo = '/api/chat/update-room-info';
   static const addParticipants = '/api/chat/add-participants';
   static const removeParticipants = '/api/chat/remove-participants';

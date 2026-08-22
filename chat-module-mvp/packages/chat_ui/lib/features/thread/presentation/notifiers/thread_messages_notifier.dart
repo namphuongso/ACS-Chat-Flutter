@@ -378,7 +378,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         isSelfRemoved: isSelfRemoved,
       );
       if (content != null) {
-        _appendSystemSignalMessage(content, metadata: metadata);
+        _appendSystemSignalMessage(content, id: message.id, metadata: metadata);
       }
       return;
     }
@@ -413,7 +413,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
             targetNamesFromIds.isNotEmpty ? [targetNamesFromIds] : const [],
       );
       if (content != null) {
-        _appendSystemSignalMessage(content);
+        _appendSystemSignalMessage(content, id: message.id, metadata: metadata);
       }
       return;
     }
@@ -436,7 +436,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         targetFallback: userName,
       );
       if (content != null) {
-        _appendSystemSignalMessage(content);
+        _appendSystemSignalMessage(content, id: message.id, metadata: metadata);
       }
       return;
     }
@@ -481,7 +481,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         targetFallback: targetName,
       );
       if (content != null) {
-        _appendSystemSignalMessage(content);
+        _appendSystemSignalMessage(content, id: message.id, metadata: metadata);
       }
       return;
     }
@@ -522,7 +522,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         targetFallback: targetName,
       );
       if (content != null) {
-        _appendSystemSignalMessage(content, metadata: metadata);
+        _appendSystemSignalMessage(content, id: message.id, metadata: metadata);
       }
       return;
     }
@@ -545,29 +545,51 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
           ? rawActorName.trim()
           : _getDisplayName(updatedByUserId, '');
 
-      final newRoomName = (metadata['roomName'] ?? payload['roomName'] ?? '').toString().trim();
-      final newAvatarUrl = (metadata['avatarUrl'] ?? payload['avatarUrl'] ?? '').toString().trim();
+      final updateType = (metadata['updateType'] ??
+              payload['updateType'] ??
+              metadata['type'] ??
+              payload['type'] ??
+              '')
+          .toString()
+          .trim()
+          .toLowerCase();
 
-      final conversations = ref.read(conversationListProvider);
-      final currentConversation = conversations
-          .where((c) => c.id == roomId || c.threadId == threadId)
-          .firstOrNull;
-      final currentRoomName = currentConversation?.roomName.trim() ?? '';
-      final currentAvatarUrl = currentConversation?.avatarUrl?.trim() ?? '';
-
-      final isNameChanged = newRoomName.isNotEmpty &&
-          currentRoomName.isNotEmpty &&
-          newRoomName != currentRoomName;
-      final isAvatarChanged = newAvatarUrl.isNotEmpty &&
-          newAvatarUrl != currentAvatarUrl;
-
-      if (isNameChanged) {
+      if (updateType.contains('name')) {
         payload['isNameChanged'] = true;
         metadata['isNameChanged'] = true;
-      }
-      if (isAvatarChanged) {
+      } else if (updateType.contains('avatar')) {
         payload['isAvatarChanged'] = true;
         metadata['isAvatarChanged'] = true;
+      } else if (updateType.contains('all')) {
+        payload['isNameChanged'] = true;
+        metadata['isNameChanged'] = true;
+        payload['isAvatarChanged'] = true;
+        metadata['isAvatarChanged'] = true;
+      } else {
+        final newRoomName = (metadata['roomName'] ?? payload['roomName'] ?? '').toString().trim();
+        final newAvatarUrl = (metadata['avatarUrl'] ?? payload['avatarUrl'] ?? '').toString().trim();
+
+        final conversations = ref.read(conversationListProvider);
+        final currentConversation = conversations
+            .where((c) => c.id == roomId || c.threadId == threadId)
+            .firstOrNull;
+        final currentRoomName = currentConversation?.roomName.trim() ?? '';
+        final currentAvatarUrl = currentConversation?.avatarUrl?.trim() ?? '';
+
+        final isNameChanged = newRoomName.isNotEmpty &&
+            currentRoomName.isNotEmpty &&
+            newRoomName != currentRoomName;
+        final isAvatarChanged = newAvatarUrl.isNotEmpty &&
+            newAvatarUrl != currentAvatarUrl;
+
+        if (isNameChanged) {
+          payload['isNameChanged'] = true;
+          metadata['isNameChanged'] = true;
+        }
+        if (isAvatarChanged) {
+          payload['isAvatarChanged'] = true;
+          metadata['isAvatarChanged'] = true;
+        }
       }
 
       final content = SystemMessageTextBuilder.build(
@@ -577,7 +599,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         actorFallback: actorName,
       );
       if (content != null) {
-        _appendSystemSignalMessage(content, metadata: metadata);
+        _appendSystemSignalMessage(content, id: message.id, metadata: metadata);
       }
       return;
     }
@@ -631,12 +653,24 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
     }
   }
 
-  void _appendSystemSignalMessage(String content,
-      {Map<String, dynamic>? metadata}) {
-    if (_messages.isNotEmpty && _messages.last.content == content) return;
+  void _appendSystemSignalMessage(
+    String content, {
+    String? id,
+    Map<String, dynamic>? metadata,
+  }) {
+    if (id != null && id.isNotEmpty && _messages.any((m) => m.id == id)) {
+      return;
+    }
+    final isDuplicate = _messages.any((m) =>
+        m.type == MessageType.system &&
+        (m.content == content ||
+            (metadata?['id'] != null &&
+                m.metadata?['id'] == metadata?['id'])) &&
+        DateTime.now().difference(m.createdAt).abs().inSeconds < 10);
+    if (isDuplicate) return;
 
     final sysMsg = MessageModel(
-      id: 'sys_${DateTime.now().millisecondsSinceEpoch}',
+      id: id ?? 'sys_${DateTime.now().millisecondsSinceEpoch}',
       threadId: threadId,
       senderId: '',
       senderDisplayName: '',
@@ -841,6 +875,15 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
             m.type == MessageType.memberRemovedUpdate ||
             m.type == MessageType.roomUpdatedUpdate) {
           return false;
+        }
+        if (m.type == MessageType.system) {
+          final isAlreadyInRemote = remoteItems.any((rm) =>
+              rm.type == MessageType.system &&
+              (rm.content == m.content ||
+                  (rm.metadata?['id'] != null &&
+                      rm.metadata?['id'] == m.metadata?['id']) ||
+                  (rm.id.isNotEmpty && rm.id == m.id)));
+          if (isAlreadyInRemote) return false;
         }
         return true;
       }).toList();

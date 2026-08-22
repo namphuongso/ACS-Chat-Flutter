@@ -1,5 +1,6 @@
 import '../../../../core/domain/entities/chat_member.dart';
 import '../entities/conversation.dart';
+import '../entities/room_update_type.dart';
 
 abstract class ConversationRepository {
   /// Tạo hoặc lấy lại direct conversation với 1 user khác.
@@ -15,11 +16,14 @@ abstract class ConversationRepository {
 
   Future<List<ChatMember>> getMembers(String roomId);
 
+  Future<List<RoomUpdateType>> getRoomUpdateTypes();
+
   Future<bool> updateRoomInfo({
     required String roomId,
     required String roomName,
     String? avatarUrl,
     required String roomType,
+    String? updateType,
   });
 
   Future<int> addParticipants({

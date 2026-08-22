@@ -400,11 +400,25 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
         filePath: path,
         filename: picked.name,
       );
+
+      String? avatarTypeCode;
+      try {
+        final updateTypes =
+            await ref.read(getRoomUpdateTypesUseCaseProvider)();
+        final avatarType = updateTypes
+            .where((t) => t.code.toLowerCase() == 'avatar')
+            .firstOrNull;
+        avatarTypeCode = avatarType?.code ?? 'Avatar';
+      } catch (_) {
+        avatarTypeCode = 'Avatar';
+      }
+
       final success = await ref.read(updateRoomInfoUseCaseProvider)(
         roomId: widget.roomId,
         roomName: _roomDetails?.roomName ?? '',
         avatarUrl: avatarUrl,
         roomType: 'G',
+        updateType: avatarTypeCode,
       );
       if (!mounted) return;
       Navigator.pop(context);
@@ -505,12 +519,25 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
     );
 
     try {
+      String? nameTypeCode;
+      try {
+        final updateTypes =
+            await ref.read(getRoomUpdateTypesUseCaseProvider)();
+        final nameType = updateTypes
+            .where((t) => t.code.toLowerCase() == 'name')
+            .firstOrNull;
+        nameTypeCode = nameType?.code ?? 'Name';
+      } catch (_) {
+        nameTypeCode = 'Name';
+      }
+
       final updateRoomUseCase = ref.read(updateRoomInfoUseCaseProvider);
       final success = await updateRoomUseCase(
         roomId: widget.roomId,
         roomName: newName,
         avatarUrl: _roomDetails?.avatarUrl,
         roomType: 'G',
+        updateType: nameTypeCode,
       );
 
       if (mounted) {

@@ -21,7 +21,6 @@ class RoomQuickActions extends StatelessWidget {
     final items = [
       (Icons.search, 'Tìm\ntin nhắn'),
       (Icons.group_add_outlined, 'Thêm\nthành viên'),
-      (Icons.wallpaper_outlined, 'Đổi\nhình nền'),
     ];
     return Material(
       color: config.surfaceColor ?? Colors.white,

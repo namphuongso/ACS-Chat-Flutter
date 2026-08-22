@@ -122,6 +122,12 @@ final getMembersUseCaseProvider = Provider<GetMembersUseCase>((ref) {
   return GetMembersUseCase(repo);
 });
 
+final getRoomUpdateTypesUseCaseProvider =
+    Provider<GetRoomUpdateTypesUseCase>((ref) {
+  final repo = ref.watch(conversationRepositoryProvider);
+  return GetRoomUpdateTypesUseCase(repo);
+});
+
 final updateRoomInfoUseCaseProvider = Provider<UpdateRoomInfoUseCase>((ref) {
   final repo = ref.watch(conversationRepositoryProvider);
   return UpdateRoomInfoUseCase(repo);
