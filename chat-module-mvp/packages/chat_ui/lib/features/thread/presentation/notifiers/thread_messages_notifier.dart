@@ -1076,16 +1076,6 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
     String content, {
     Map<String, dynamic>? metaData,
   }) async {
-    var finalMetaData = metaData;
-    if (finalMetaData == null) {
-      final urlMatch = RegExp(r'(https?://[^\s<]+)').firstMatch(content);
-      if (urlMatch != null) {
-        final linkUrl = urlMatch.group(0)!;
-        final previewData = await LinkPreviewFetcher.fetch(linkUrl);
-        finalMetaData = previewData.toJson();
-      }
-    }
-
     final optimisticId = 'local-${DateTime.now().microsecondsSinceEpoch}';
     final optimistic = Message(
       id: optimisticId,
@@ -1096,9 +1086,21 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       type: MessageType.text,
       createdAt: DateTime.now(),
       status: MessageDeliveryStatus.sending,
-      metadata: finalMetaData,
+      metadata: metaData,
     );
     state = state.copyWith(messages: [..._messages, optimistic]);
+
+    var finalMetaData = metaData;
+    if (finalMetaData == null) {
+      final urlMatch = RegExp(r'(https?://[^\s<]+)').firstMatch(content);
+      if (urlMatch != null) {
+        final linkUrl = urlMatch.group(0)!;
+        try {
+          final previewData = await LinkPreviewFetcher.fetch(linkUrl);
+          finalMetaData = previewData.toJson();
+        } catch (_) {}
+      }
+    }
 
     try {
       final sent = await _sendMessageUseCase(

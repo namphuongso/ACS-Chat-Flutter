@@ -11,11 +11,12 @@ import '../../domain/services/system_message_text.dart';
 import '../models/message_model.dart';
 import 'native_realtime_datasource.dart';
 
-typedef WebSocketRealtimeDataSourceImpl = NativeRealtimeDataSourceImpl;
+/// Alias tương thích ngược cho tên cũ.
+typedef NativeRealtimeDataSourceImpl = WebSocketRealtimeDataSourceImpl;
 
 /// Realtime app-wide qua backend WebSocket.
-class NativeRealtimeDataSourceImpl implements NativeRealtimeDataSource {
-  NativeRealtimeDataSourceImpl({
+class WebSocketRealtimeDataSourceImpl implements NativeRealtimeDataSource {
+  WebSocketRealtimeDataSourceImpl({
     required ChatModuleConfig config,
     ChatAuthTokenProvider? appTokenProvider,
   })  : _config = config,

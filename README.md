@@ -26,16 +26,9 @@ dependencies:
       url: git@github.com:namphuongso/ACS-Chat-Flutter.git
       path: chat-module-mvp/packages/chat_ui
       ref: development
-
-  # Plugin kết nối Realtime Native (Android & iOS ACS SDK)
-  chat_native_platform_interface:
-    git:
-      url: git@github.com:namphuongso/ACS-Chat-Flutter.git
-      path: chat-module-mvp/packages/chat_native_platform_interface
-      ref: development
 ```
 
-> 💡 **Mẹo**: Nếu sử dụng kết nối HTTPS thay vì SSH key, bạn có thể đổi URL thành `https://github.com/namphuongso/ACS-Chat-Flutter.git`. Tùy theo giai đoạn release, bạn có thể thay `ref: development` bằng `ref: main` hoặc `tag: v2.0.0`.
+> 💡 **Mẹo**: Nếu sử dụng kết nối HTTPS thay vì SSH key, bạn có thể đổi URL thành `https://github.com/namphuongso/ACS-Chat-Flutter.git`. Tùy theo giai đoạn release, bạn có thể thay `ref: development` bằng `ref: main` hoặc `tag: v2.0.0`. Realtime sử dụng kết nối WebSocket thuần Dart nên không yêu cầu cài đặt thêm native SDK plugin.
 
 ---
 

@@ -98,7 +98,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
       appToken: appToken,
       query: {'roomId': roomId, 'pin': '$pin'},
     );
-    return data != false;
+    return data == true || (data is Map && data.isNotEmpty);
   }
 
   @override
@@ -183,7 +183,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
           'updateType': updateType,
       },
     );
-    return data != false;
+    return data == true || (data is Map && data.isNotEmpty);
   }
 
   @override
@@ -240,7 +240,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
         'toUserId': toUserId,
       },
     );
-    return data != false;
+    return data == true || (data is Map && data.isNotEmpty);
   }
 
   @override
@@ -259,7 +259,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
         'admin': admin.toString(),
       },
     );
-    return data != false;
+    return data == true || (data is Map && data.isNotEmpty);
   }
 
   @override
@@ -276,7 +276,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
           'newAdminUserId': newAdminUserId,
       },
     );
-    return data != false;
+    return data == true || (data is Map && data.isNotEmpty);
   }
 
   @override
@@ -286,7 +286,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
       ChatApiEndpoints.closeRoom(roomId),
       appToken: appToken,
     );
-    return data != false;
+    return data == true || (data is Map && data.isNotEmpty);
   }
 
   @override

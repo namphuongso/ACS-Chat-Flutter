@@ -1,7 +1,8 @@
 import '../models/message_model.dart';
 
-/// Nguồn dữ liệu realtime qua native (EventChannel) — chỉ đảm nhiệm
-/// watch/stop, mọi việc khác do [MessageRemoteDataSource] lo.
+typedef WebSocketRealtimeDataSource = NativeRealtimeDataSource;
+
+/// Nguồn dữ liệu realtime qua kết nối WebSocket Backend.
 abstract class NativeRealtimeDataSource {
   Stream<MessageModel> watchNewMessages(String roomId, String threadId);
 
