@@ -18,7 +18,8 @@ class MessageModel extends Message {
     super.deletedOn,
   });
 
-  factory MessageModel.fromAcsJson(Map<String, dynamic> rawJson,
+  /// Factory khởi tạo từ JSON phản hồi REST backend.
+  factory MessageModel.fromServerJson(Map<String, dynamic> rawJson,
       {required String threadId}) {
     final itemType = rawJson['itemType']?.toString().toLowerCase();
     final json = (itemType != null && rawJson['data'] is Map)
@@ -219,4 +220,9 @@ class MessageModel extends Message {
 
     return map['message'] as String? ?? '';
   }
+
+  @Deprecated('Dùng MessageModel.fromServerJson thay thế.')
+  factory MessageModel.fromAcsJson(Map<String, dynamic> rawJson,
+          {required String threadId}) =>
+      MessageModel.fromServerJson(rawJson, threadId: threadId);
 }

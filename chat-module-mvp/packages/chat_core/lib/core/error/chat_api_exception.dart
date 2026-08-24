@@ -1,8 +1,12 @@
-/// Map theo error code registry api-docs mục 11.2. MVP chỉ xử lý các mã
-/// liên quan trực tiếp đến luồng direct chat — không xử lý hết 20 mã
-/// (nhóm group/roles/file chưa có ở MVP, theo đúng roadmap "rải đều,
-/// không dồn cuối").
-class ChatApiException implements Exception {
+/// Lớp cơ sở cho toàn bộ ngoại lệ trong Chat Module.
+abstract class ChatException implements Exception {
+  String get code;
+  String get message;
+  bool get isHttpError;
+}
+
+/// Ngoại lệ ném ra khi giao tiếp REST HTTP thất bại với HTTP status code (4xx, 5xx).
+class ChatApiException extends ChatException {
   ChatApiException({
     required this.statusCode,
     required this.code,
@@ -10,8 +14,13 @@ class ChatApiException implements Exception {
   });
 
   final int statusCode;
+  @override
   final String code;
+  @override
   final String message;
+
+  @override
+  bool get isHttpError => true;
 
   bool get isUnauthorized => statusCode == 401;
   bool get isRateLimited => statusCode == 429;
@@ -33,13 +42,22 @@ class ChatApiException implements Exception {
 }
 
 /// Ngoại lệ dành cho trường hợp phản hồi API trả về dữ liệu rỗng, sai định dạng
-/// hoặc thiếu thông tin xử lý (không phải do lỗi HTTP status code 4xx/5xx).
-class ChatDataException extends ChatApiException {
+/// hoặc thiếu thông tin xử lý (không phải do lỗi kết nối HTTP status code 4xx/5xx).
+class ChatDataException extends ChatException {
   ChatDataException({
-    required super.code,
-    required super.message,
-    super.statusCode = 422,
+    required this.code,
+    required this.message,
+    this.statusCode,
   });
+
+  @override
+  final String code;
+  @override
+  final String message;
+  final int? statusCode;
+
+  @override
+  bool get isHttpError => false;
 
   @override
   String toString() => 'ChatDataException($code): $message';

@@ -10,6 +10,7 @@ export 'core/network/json_api_client.dart';
 export 'core/utils/chat_logger.dart';
 export 'core/utils/mime_utils.dart';
 export 'core/utils/acs_user_utils.dart';
+export 'core/utils/chat_user_utils.dart';
 
 // Domain & Entities
 export 'features/auth_token/domain/entities/chat_access_token.dart';
@@ -75,6 +76,8 @@ export 'features/thread/data/datasources/message_remote_datasource.dart';
 export 'features/thread/data/datasources/message_remote_datasource_impl.dart';
 export 'features/thread/data/datasources/native_realtime_datasource.dart';
 export 'features/thread/data/datasources/native_realtime_datasource_impl.dart';
+export 'features/thread/data/datasources/websocket_realtime_datasource.dart';
+export 'features/thread/data/datasources/websocket_realtime_datasource_impl.dart';
 export 'features/thread/data/datasources/polling_engine.dart';
 
 // Data Repositories

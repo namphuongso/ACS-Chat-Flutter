@@ -153,12 +153,18 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
                 .trim()
                 .toLowerCase();
 
-        if (updateType.contains('name')) {
+        final tokens = updateType
+            .split(',')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toSet();
+
+        if (tokens.contains('all') || updateType == 'all') {
           payload['isNameChanged'] = true;
-        } else if (updateType.contains('avatar')) {
           payload['isAvatarChanged'] = true;
-        } else if (updateType.contains('all')) {
+        } else if (tokens.contains('name') || updateType == 'name') {
           payload['isNameChanged'] = true;
+        } else if (tokens.contains('avatar') || updateType == 'avatar') {
           payload['isAvatarChanged'] = true;
         } else if (nextPayload != null) {
           final roomName =

@@ -276,7 +276,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     });
 
     int pagesFetched = 0;
-    while (pagesFetched < 8 && !notifier.hasReachedEnd && mounted) {
+    while (pagesFetched < 4 && !notifier.hasReachedEnd && mounted) {
       if (_searchSequence != currentSeq || !_isSearching) break;
 
       final prevCount = ref.read(threadMessagesProvider).messages.length;

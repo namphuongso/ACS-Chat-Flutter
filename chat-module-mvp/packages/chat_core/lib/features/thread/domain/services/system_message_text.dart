@@ -25,6 +25,11 @@ class SystemMessageTextBuilder {
   /// Hook tuỳ biến ngôn ngữ / bản dịch chuỗi thông báo hệ thống từ host app.
   static SystemMessageCustomResolver? customResolver;
 
+  /// Đặt custom resolver hỗ trợ host app thiết lập bản dịch thông báo hệ thống.
+  static void setCustomResolver(SystemMessageCustomResolver? resolver) {
+    customResolver = resolver;
+  }
+
   /// Sinh câu hiển thị cho [eventType]. Trả về `null` nếu eventType không
   /// thuộc loại đã biết (caller tự quyết fallback).
   static String? build({
