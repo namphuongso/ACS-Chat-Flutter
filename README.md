@@ -15,18 +15,19 @@ dependencies:
     git:
       url: git@github.com:namphuongso/ACS-Chat-Flutter.git
       path: chat-module-mvp/packages/chat_core
-      ref: development
+      ref: v1.0.0
 
   chat_ui:
     git:
       url: git@github.com:namphuongso/ACS-Chat-Flutter.git
       path: chat-module-mvp/packages/chat_ui
-      ref: development
+      ref: v1.0.0
 ```
 
 Lưu ý:
 - Có thể dùng URL HTTPS `https://github.com/namphuongso/ACS-Chat-Flutter.git` nếu không dùng SSH key.
-- Có thể thay `ref: development` bằng `ref: main` hoặc `tag: vX.Y.Z` tùy môi trường release.
+- Môi trường **Development**: dùng `ref: development` hoặc `ref: main`.
+- Môi trường **Production**: nên trỏ cố định về Git Tag phiên bản phát hành (ví dụ `ref: v1.0.0`) để đảm bảo tính ổn định tuyệt đối cho ứng dụng Host.
 - Realtime sử dụng kết nối WebSocket thuần Dart nên không yêu cầu cài đặt native SDK plugin.
 
 ## Khởi tạo & Setup
@@ -115,7 +116,7 @@ if (deepLinkData != null) {
 - Chat 1-1 và Chat nhóm (Direct Chat & Group Chat).
 - WebSocket Realtime với cơ chế tự động duy trì Heartbeat và Reconnect khi khôi phục kết nối mạng.
 - Quản lý phòng chat: tạo nhóm, xem thành viên, đổi tên nhóm, đổi avatar nhóm, ghim tin nhắn, chuyển quyền trưởng phòng, bổ nhiệm quản trị viên, rời phòng chat.
-- Gửi tin nhắn đa phương tiện qua Azure Blob SAS URL: hình ảnh (bộ lưới 1-4+ ảnh, carousel xem toàn màn hình), video, tệp tài liệu (PDF, Word, Excel, PowerPoint, ZIP, TXT) kèm tiến trình upload realtime.
+- Gửi tin nhắn đa phương tiện qua Azure Blob SAS URL: hình ảnh (bộ lưới 1-4+ ảnh, carousel xem toàn màn hình), video, tệp tài liệu (PDF, Word, Excel, PowerPoint) kèm tiến trình upload realtime.
 - Tự động hiển thị thẻ xem trước liên kết (Link Preview Card) khi gửi tin nhắn chứa đường dẫn URL.
 - Thả biểu tượng cảm xúc tin nhắn (Message Reactions: Like, Love, Haha, Wow, Sad, Angry).
 - Lưu trữ và truy xuất cache offline dữ liệu cuộc trò chuyện và tin nhắn với Hive Local Storage.

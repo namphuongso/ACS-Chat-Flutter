@@ -1,6 +1,6 @@
 name: chat_core
 description: Domain + data layer cho module chat (ACS + BE nội bộ). Dart thuần, không phụ thuộc widget UI.
-version: 0.1.0
+version: 1.0.0
 publish_to: 'none'
 
 environment:
