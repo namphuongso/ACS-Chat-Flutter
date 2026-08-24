@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/chat_ui_config.dart';
+import '../../../../core/utils/avatar_utils.dart';
 
-/// App bar widget for the thread view.
+/// App bar widget for the thread view (restored to original exact design).
 class ThreadAppBar extends StatelessWidget implements PreferredSizeWidget {
   const ThreadAppBar({
     super.key,
@@ -25,54 +26,67 @@ class ThreadAppBar extends StatelessWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    final primary = config.primaryActionColor ?? Theme.of(context).colorScheme.primary;
+    final theme = Theme.of(context);
+    final hasAvatar = isNetworkAvatar(avatarUrl);
+    final initial = roomName.isNotEmpty ? roomName[0].toUpperCase() : '?';
 
     return AppBar(
+      scrolledUnderElevation: 0,
+      surfaceTintColor: Colors.transparent,
+      backgroundColor: config.appBarBackgroundColor,
       titleSpacing: 0,
       leading: IconButton(
-        icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+        icon: Icon(
+          Icons.arrow_back_ios,
+          color: config.iconColor ?? theme.iconTheme.color,
+        ),
         onPressed: onBackTap,
       ),
-      title: InkWell(
-        onTap: onSettingsTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                roomName,
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(width: 4),
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 20,
-                color: Colors.grey.shade500,
-              ),
-            ],
+      title: Row(
+        children: [
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: const Color(0xFFF0F2F5),
+            backgroundImage: hasAvatar ? NetworkImage(avatarUrl!) : null,
+            child: !hasAvatar
+                ? Text(
+                    initial,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.black87,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  )
+                : null,
           ),
-        ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              roomName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: config.appBarIconColor ?? Colors.black87,
+              ),
+            ),
+          ),
+        ],
       ),
       actions: [
         IconButton(
           icon: Icon(
-            isSearching ? Icons.search_off_rounded : Icons.search_rounded,
-            color: isSearching ? primary : Colors.black87,
+            isSearching ? Icons.close : Icons.search,
+            color: config.iconColor ?? theme.iconTheme.color,
           ),
-          tooltip: 'Tìm kiếm tin nhắn',
           onPressed: onSearchTap,
         ),
         IconButton(
-          icon: const Icon(Icons.more_vert_rounded),
-          tooltip: 'Cài đặt phòng',
+          icon: Icon(
+            Icons.info_outline,
+            color: config.iconColor ?? theme.iconTheme.color,
+          ),
           onPressed: onSettingsTap,
         ),
       ],

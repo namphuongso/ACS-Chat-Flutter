@@ -18,7 +18,7 @@ class MessageMediaUploadService {
     required String roomId,
     required Future<void> Function(
       String content, {
-      Map<String, dynamic>? metaData,
+      Map<String, dynamic>? metadata,
     }) sendMessage,
   })  : _ref = ref,
         _roomId = roomId,
@@ -26,7 +26,7 @@ class MessageMediaUploadService {
 
   final Ref _ref;
   final String _roomId;
-  final Future<void> Function(String content, {Map<String, dynamic>? metaData})
+  final Future<void> Function(String content, {Map<String, dynamic>? metadata})
       _sendMessage;
 
   /// Tải các hình ảnh được chọn lên qua Azure Blob SAS URL và gửi tin nhắn hình ảnh.
@@ -99,7 +99,7 @@ class MessageMediaUploadService {
       if (uploadedFiles.isNotEmpty) {
         final firstFile = uploadedFiles.first;
         final firstSize = int.tryParse(firstFile['size'] ?? '') ?? 0;
-        final metaData = <String, dynamic>{
+        final metadata = <String, dynamic>{
           'type': 'image',
           'url': firstFile['url']?.toString() ?? '',
           'fileName': firstFile['fileName']?.toString() ?? '',
@@ -121,7 +121,7 @@ class MessageMediaUploadService {
               .toList(),
         };
 
-        await _sendMessage('[Hình ảnh]', metaData: metaData);
+        await _sendMessage('[Hình ảnh]', metadata: metadata);
       }
 
       _reportUploadFailures(failedFiles, imageFiles.length);
@@ -194,7 +194,7 @@ class MessageMediaUploadService {
 
       if (uploadedFiles.isNotEmpty) {
         final firstFile = uploadedFiles.first;
-        final metaData = <String, dynamic>{
+        final metadata = <String, dynamic>{
           'type': 'file',
           'url': firstFile['url']?.toString() ?? '',
           'fileName': firstFile['fileName']?.toString() ?? '',
@@ -210,7 +210,7 @@ class MessageMediaUploadService {
               .toList(),
         };
 
-        await _sendMessage('[Tệp tin]', metaData: metaData);
+        await _sendMessage('[Tệp tin]', metadata: metadata);
       }
 
       _reportUploadFailures(failedFiles, fileItems.length);
@@ -285,14 +285,14 @@ class MessageMediaUploadService {
       }
 
       for (final item in uploadedFiles) {
-        final metaData = <String, dynamic>{
+        final metadata = <String, dynamic>{
           'type': 'video',
           'url': item['url'] ?? '',
           'fileName': item['fileName'] ?? '',
           'mimeType': item['mimeType'] ?? 'video/mp4',
           'fileSize': item['fileSize'] ?? '0',
         };
-        await _sendMessage('[Video]', metaData: metaData);
+        await _sendMessage('[Video]', metadata: metadata);
       }
 
       _reportUploadFailures(failedFiles, videoItems.length);

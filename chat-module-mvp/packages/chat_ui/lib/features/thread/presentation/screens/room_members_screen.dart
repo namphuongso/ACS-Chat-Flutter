@@ -310,11 +310,15 @@ class _RoomMembersScreenState extends ConsumerState<RoomMembersScreen> {
           const SnackBar(content: Text('Không thể thêm thành viên')),
         );
       }
-    } catch (e) {
+    } catch (e, st) {
+      ChatLogger.error('Add participants error', error: e, stackTrace: st);
       if (!mounted) return;
       Navigator.pop(context); // Tắt loading
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lỗi: $e')),
+      showChatToast(
+        context,
+        message: 'Thao tác không thành công',
+        isError: true,
+        config: ref.read(chatUiConfigProvider),
       );
     }
   }
@@ -360,11 +364,15 @@ class _RoomMembersScreenState extends ConsumerState<RoomMembersScreen> {
           const SnackBar(content: Text('Không thể chuyển quyền Owner')),
         );
       }
-    } catch (e) {
+    } catch (e, st) {
+      ChatLogger.error('Transfer ownership error', error: e, stackTrace: st);
       if (!mounted) return;
       Navigator.pop(context); // Tắt loading
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lỗi: $e')),
+      showChatToast(
+        context,
+        message: 'Không thể chuyển quyền Owner',
+        isError: true,
+        config: ref.read(chatUiConfigProvider),
       );
     }
   }
@@ -402,11 +410,15 @@ class _RoomMembersScreenState extends ConsumerState<RoomMembersScreen> {
           const SnackBar(content: Text('Không thể cập nhật quyền Admin')),
         );
       }
-    } catch (e) {
+    } catch (e, st) {
+      ChatLogger.error('Set role admin error', error: e, stackTrace: st);
       if (!mounted) return;
       Navigator.pop(context); // Tắt loading
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lỗi: $e')),
+      showChatToast(
+        context,
+        message: 'Không thể cập nhật quyền Admin',
+        isError: true,
+        config: ref.read(chatUiConfigProvider),
       );
     }
   }
@@ -454,11 +466,15 @@ class _RoomMembersScreenState extends ConsumerState<RoomMembersScreen> {
           const SnackBar(content: Text('Không thể xóa thành viên')),
         );
       }
-    } catch (e) {
+    } catch (e, st) {
+      ChatLogger.error('Remove member error', error: e, stackTrace: st);
       if (!mounted) return;
       Navigator.pop(context); // Tắt loading
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lỗi: $e')),
+      showChatToast(
+        context,
+        message: 'Không thể xóa thành viên',
+        isError: true,
+        config: ref.read(chatUiConfigProvider),
       );
     }
   }

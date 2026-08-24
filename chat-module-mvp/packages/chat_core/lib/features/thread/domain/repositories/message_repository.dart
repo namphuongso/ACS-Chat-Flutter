@@ -12,7 +12,7 @@ abstract class MessageRepository {
     required String roomId,
     required String threadId,
     required String content,
-    Map<String, dynamic>? metaData,
+    Map<String, dynamic>? metadata,
   });
 
   /// Sửa nội dung tin nhắn đã gửi — đi qua BE (`POST /chat/update-message`).

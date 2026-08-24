@@ -1,4 +1,5 @@
 import 'package:chat_core/chat_core.dart';
+import 'package:chat_core/chat_core_impl.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'local_cache_providers.dart';
@@ -58,7 +59,7 @@ final messageRepositoryProvider = Provider<MessageRepository>((ref) {
     authTokenRepository: authTokenRepo,
     appTokenProvider: appTokenProvider,
   );
-  final realtime = NativeRealtimeDataSourceImpl(
+  final realtime = WebSocketRealtimeDataSourceImpl(
     config: config,
     appTokenProvider: appTokenProvider,
   );

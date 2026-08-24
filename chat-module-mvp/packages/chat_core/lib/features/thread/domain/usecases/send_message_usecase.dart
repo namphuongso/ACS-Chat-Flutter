@@ -9,12 +9,12 @@ class SendMessageUseCase {
     required String roomId,
     required String threadId,
     required String content,
-    Map<String, dynamic>? metaData,
+    Map<String, dynamic>? metadata,
   }) =>
       _repository.sendMessage(
         roomId: roomId,
         threadId: threadId,
         content: content,
-        metaData: metaData,
+        metadata: metadata,
       );
 }

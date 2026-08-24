@@ -35,10 +35,10 @@ class MessageRepositoryImpl implements MessageRepository {
     required String roomId,
     required String threadId,
     required String content,
-    Map<String, dynamic>? metaData,
+    Map<String, dynamic>? metadata,
   }) async {
     final message = await _remote.sendMessage(
-        roomId: roomId, threadId: threadId, content: content, metaData: metaData);
+        roomId: roomId, threadId: threadId, content: content, metadata: metadata);
     await _appendToCache(threadId, message);
     return message;
   }

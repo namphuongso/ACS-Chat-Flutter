@@ -1,5 +1,5 @@
 import 'package:chat_core/chat_core.dart';
-import 'package:chat_core/features/thread/data/models/message_resource_model.dart';
+import 'package:chat_core/chat_core_impl.dart';
 import 'package:test/test.dart';
 
 class _MockRemote implements MessageRemoteDataSource {
@@ -25,7 +25,7 @@ class _MockRemote implements MessageRemoteDataSource {
     required String roomId,
     required String threadId,
     required String content,
-    Map<String, dynamic>? metaData,
+    Map<String, dynamic>? metadata,
   }) async {
     return MessageModel(
       id: 'sent-$content',
@@ -36,7 +36,7 @@ class _MockRemote implements MessageRemoteDataSource {
       type: MessageType.text,
       createdAt: DateTime(2026, 2, 1),
       status: MessageDeliveryStatus.sent,
-      metadata: metaData,
+      metadata: metadata,
     );
   }
 
@@ -74,17 +74,27 @@ class _MockRemote implements MessageRemoteDataSource {
       const [];
 
   @override
-  Future<List<ReactionConfig>> getReactionConfigs() async => const [];
+  Future<List<ReactionConfig>> getReactionConfigs({
+    int pageIndex = 1,
+    int pageSize = 50,
+  }) async =>
+      const [];
 
   @override
   Future<List<MessageReaction>> getMessageReactions({
     required String roomId,
     required String messageId,
+    int pageIndex = 1,
+    int pageSize = 50,
   }) async =>
       const [];
 
   @override
-  Future<List<MessageReactionSummary>> getRoomReactions(String roomId) async =>
+  Future<List<MessageReactionSummary>> getRoomReactions(
+    String roomId, {
+    int pageIndex = 1,
+    int pageSize = 50,
+  }) async =>
       const [];
 
   @override

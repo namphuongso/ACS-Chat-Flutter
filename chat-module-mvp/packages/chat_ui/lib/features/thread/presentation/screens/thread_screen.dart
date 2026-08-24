@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
@@ -15,14 +14,14 @@ import '../../../../core/chat_ui_config.dart';
 import '../../../conversation_list/presentation/providers/conversation_providers.dart';
 import '../providers/thread_providers.dart';
 import '../../../shared/presentation/providers/connectivity_providers.dart';
-import '../widgets/message_action_button.dart';
-import '../widgets/reaction_picker_item.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/message_input.dart';
-import '../widgets/message_readers_sheet.dart';
 import '../widgets/pinned_message_row.dart';
 import '../widgets/upload_error_listener.dart';
 import '../widgets/upload_progress_banner.dart';
+import '../widgets/thread_app_bar.dart';
+import '../widgets/thread_search_bar.dart';
+import '../widgets/message_action_sheet.dart';
 import 'room_settings_screen.dart';
 
 class ThreadScreen extends StatefulWidget {
@@ -203,6 +202,48 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       _currentSearchIndex = -1;
       _highlightedMessageId = null;
     });
+  }
+
+  Future<void> _openRoomSettings(
+      BuildContext context, Conversation? conversation) async {
+    final roomId = ref.read(roomIdProvider);
+    final result = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute(
+        builder: (_) => RoomSettingsScreen(
+          roomId: roomId,
+          currentUserId: widget.currentUserId,
+          roomType: conversation?.type ?? ConversationType.direct,
+          onRoomChanged: (updatedRoom) {
+            ref
+                .read(conversationListProvider.notifier)
+                .updateRoomDetails(
+                  updatedRoom.id,
+                  roomName: updatedRoom.roomName,
+                  avatarUrl: updatedRoom.avatarUrl,
+                  participants: updatedRoom.participants,
+                );
+          },
+        ),
+      ),
+    );
+    if (result == 'open_search' && context.mounted) {
+      _openMessageSearch();
+      return;
+    }
+    if (result is Conversation && context.mounted) {
+      await _openConversation(result);
+      return;
+    }
+    if ((result == true || result == 'room_disbanded') && context.mounted) {
+      final route = ModalRoute.of(context);
+      if (route != null && route.isCurrent && Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+      return;
+    }
+    if (context.mounted) {
+      await ref.read(threadMessagesProvider.notifier).refreshLatest();
+    }
   }
 
   void _onSearchInputChanged(String query) {
@@ -672,38 +713,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     Message message, {
     required bool canEdit,
   }) async {
-    final config = ref.read(chatUiConfigProvider);
-    final danger = config.dangerColor ?? Colors.redAccent;
-    final primary =
-        config.primaryActionColor ?? Theme.of(context).colorScheme.primary;
     final notifier = ref.read(threadMessagesProvider.notifier);
-    List<ReactionConfig> reactionConfigs = const [];
-    String? myReactionCode;
-    try {
-      final results = await Future.wait([
-        notifier.getReactionConfigs(),
-        notifier.getMessageReactions(message.id),
-      ]);
-      reactionConfigs = results[0] as List<ReactionConfig>;
-      final reactions = results[1] as List<MessageReaction>;
-      final summary = notifier.reactionSummaryFor(message.id);
-      myReactionCode = summary?.myReactionCode;
-      if (myReactionCode == null || myReactionCode.isEmpty) {
-        final myAcs = AcsUserUtils.normalizeAcsId(notifier.myAcsUserId ?? '');
-        final myUser = AcsUserUtils.normalizeAcsId(widget.currentUserId);
-        myReactionCode = reactions
-            .where((r) {
-              final rId = AcsUserUtils.normalizeAcsId(r.userId);
-              return r.userId == widget.currentUserId ||
-                  (myAcs.isNotEmpty && rId == myAcs) ||
-                  rId == myUser;
-            })
-            .firstOrNull
-            ?.reactionCode;
-      }
-    } catch (_) {}
-    if (!mounted) return;
-
     final myAcsUserId = notifier.myAcsUserId;
     final normSender = AcsUserUtils.normalizeAcsId(message.senderId);
     final isMe = message.senderId == widget.currentUserId ||
@@ -711,367 +721,14 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
             normSender == AcsUserUtils.normalizeAcsId(myAcsUserId));
     final senderAvatar = isMe ? null : _getSenderAvatar(message);
 
-    var hoveredReactionIndex = -1;
-    await showDialog<void>(
+    await MessageActionSheet.showMessageContextMenu(
       context: context,
-      barrierColor: Colors.black45,
-      builder: (dialogContext) {
-        return StatefulBuilder(builder: (overlayContext, setOverlayState) {
-          Future<void> selectReaction(int index) async {
-            if (index < 0 || index >= reactionConfigs.length) return;
-            final reaction = reactionConfigs[index];
-            final reactionIdToPass =
-                (reaction.id != null && reaction.id!.isNotEmpty)
-                    ? reaction.id!
-                    : reaction.code;
-            final selected = myReactionCode == reaction.code ||
-                (reaction.id != null && myReactionCode == reaction.id);
-            Navigator.pop(dialogContext);
-            var ok = false;
-            try {
-              ok = await notifier.reactMessage(
-                message.id,
-                selected ? '' : reactionIdToPass,
-              );
-            } catch (_) {}
-            if (!mounted) return;
-            if (!ok) {
-              showChatToast(
-                this.context,
-                message: 'Không thể cập nhật cảm xúc',
-                isError: true,
-                config: config,
-              );
-            }
-          }
-
-          return Material(
-            color: Colors.transparent,
-            child: SafeArea(
-              child: Stack(
-                children: [
-                  // Backdrop tap to dismiss dialog
-                  Positioned.fill(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => Navigator.pop(dialogContext),
-                      child: const SizedBox.expand(),
-                    ),
-                  ),
-                  // 1. Center/Appear Area: Floating Reaction Bar + Target Message Bubble (Nằm ngoài BottomSheet)
-                  Align(
-                    alignment: Alignment.center,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.translucent,
-                      onTap: () => Navigator.pop(dialogContext),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 24),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: isMe
-                              ? CrossAxisAlignment.end
-                              : CrossAxisAlignment.start,
-                        children: [
-                          // Reaction Bar (Khung thả cảm xúc dạng floating pill)
-                          if (reactionConfigs.isNotEmpty)
-                            Center(
-                              child: Material(
-                                color: config.surfaceColor ?? Colors.white,
-                                elevation: 12,
-                                borderRadius: BorderRadius.circular(28),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  child: SingleChildScrollView(
-                                    scrollDirection: Axis.horizontal,
-                                    physics: const BouncingScrollPhysics(),
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onHorizontalDragUpdate: (details) {
-                                        final index =
-                                            (details.localPosition.dx / 44)
-                                                .floor();
-                                        final safeIndex = index.clamp(
-                                          0,
-                                          reactionConfigs.length - 1,
-                                        );
-                                        if (safeIndex != hoveredReactionIndex) {
-                                          setOverlayState(
-                                            () => hoveredReactionIndex =
-                                                safeIndex,
-                                          );
-                                        }
-                                      },
-                                      onHorizontalDragEnd: (_) {
-                                        selectReaction(hoveredReactionIndex);
-                                      },
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          for (var index = 0;
-                                              index < reactionConfigs.length;
-                                              index++)
-                                            ReactionPickerItem(
-                                              reaction: reactionConfigs[index],
-                                              isSelected: myReactionCode ==
-                                                  reactionConfigs[index].code,
-                                              isHovered:
-                                                  hoveredReactionIndex == index,
-                                              primaryColor: primary,
-                                              onHover: (hovering) {
-                                                setOverlayState(() {
-                                                  hoveredReactionIndex =
-                                                      hovering ? index : -1;
-                                                });
-                                              },
-                                              onTap: () =>
-                                                  selectReaction(index),
-                                            ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          const SizedBox(height: 12),
-
-                          // Message Bubble (Tin nhắn được chọn nằm ngoài BottomSheet, hiển thị Avatar đầy đủ)
-                          IgnorePointer(
-                            child: MessageBubble(
-                              message: message,
-                              isMe: isMe,
-                              senderAvatarUrl: senderAvatar,
-                              showSenderAvatar: true,
-                              reactionSummary:
-                                  notifier.reactionSummaryFor(message.id),
-                            ),
-                          ),
-                          const SizedBox(
-                              height:
-                                  80), // Chừa khoảng trống cho BottomSheet phía dưới
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-
-                  // 2. Bottom Area: Action Sheet hiển thị dạng BottomSheet ở đáy (Chứa 4 nút icon tròn ban đầu)
-                  Align(
-                    alignment: Alignment.bottomCenter,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Material(
-                        color: config.surfaceColor ?? Colors.white,
-                        elevation: 12,
-                        borderRadius: BorderRadius.circular(20),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 14,
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceAround,
-                            children: [
-                              MessageActionButton(
-                                icon: Icons.content_copy_rounded,
-                                label: 'Sao chép',
-                                onTap: () {
-                                  Navigator.pop(dialogContext);
-                                  Clipboard.setData(
-                                      ClipboardData(text: message.content));
-                                  if (mounted) {
-                                    showChatToast(
-                                      context,
-                                      message: 'Đã sao chép tin nhắn',
-                                      config: config,
-                                    );
-                                  }
-                                },
-                              ),
-                              MessageActionButton(
-                                icon: Icons.edit_outlined,
-                                label: 'Sửa tin',
-                                isDisabled: !canEdit,
-                                onTap: () {
-                                  Navigator.pop(dialogContext);
-                                  if (canEdit) _editMessage(context, message);
-                                },
-                              ),
-                              MessageActionButton(
-                                icon: Icons.delete_outline_rounded,
-                                label: 'Xoá tin',
-                                iconColor:
-                                    canEdit ? danger : Colors.grey.shade400,
-                                isDisabled: !canEdit,
-                                onTap: () {
-                                  Navigator.pop(dialogContext);
-                                  if (canEdit) _deleteMessage(context, message);
-                                },
-                              ),
-                              MessageActionButton(
-                                icon: Icons.more_horiz_rounded,
-                                label: 'Khác',
-                                iconColor: primary,
-                                onTap: () async {
-                                  ChatLogger.log(
-                                      '[MessageAction] Tapped Khác option button');
-                                  Navigator.pop(dialogContext);
-                                  await Future.delayed(
-                                      const Duration(milliseconds: 100));
-                                  if (!mounted) return;
-                                  _showMoreOptionsMenu(context, message);
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        });
-      },
+      ref: ref,
+      message: message,
+      isMe: isMe,
+      senderAvatar: senderAvatar,
+      notifier: notifier,
     );
-  }
-
-  void _showMoreOptionsMenu(BuildContext context, Message message) {
-    final parentContext = context;
-    final messenger = ScaffoldMessenger.of(parentContext);
-    final config = ref.read(chatUiConfigProvider);
-    final primary =
-        config.primaryActionColor ?? config.iconColor ?? Colors.blue;
-    final roomId = ref.read(roomIdProvider);
-
-    ChatLogger.log(
-        '[MessageAction] Opening _showMoreOptionsMenu for messageId=${message.id}, roomId=$roomId');
-
-    showModalBottomSheet<void>(
-      context: parentContext,
-      useRootNavigator: true,
-      backgroundColor: config.surfaceColor ?? Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const SizedBox(height: 8),
-              Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              ListTile(
-                leading: Icon(
-                  message.pin
-                      ? Icons.push_pin_rounded
-                      : Icons.push_pin_outlined,
-                  color: primary,
-                ),
-                title: Text(message.pin ? 'Bỏ ghim tin nhắn' : 'Ghim tin nhắn'),
-                onTap: () {
-                  ChatLogger.log('[MessageAction] Tapped Ghim/Bỏ ghim option');
-                  Navigator.pop(sheetContext);
-                  _togglePin(messenger, message.id, !message.pin);
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  Icons.remove_red_eye_outlined,
-                  color: primary,
-                ),
-                title: const Text('Danh sách người xem'),
-                onTap: () async {
-                  ChatLogger.log(
-                      '[MessageAction] Tapped Danh sách người xem option');
-                  Navigator.pop(sheetContext);
-                  await Future.delayed(const Duration(milliseconds: 100));
-                  if (!parentContext.mounted) {
-                    ChatLogger.log(
-                        '[MessageAction] parentContext is no longer mounted!');
-                    return;
-                  }
-                  ChatLogger.log(
-                      '[MessageAction] Showing MessageReadersSheet for roomId=$roomId, messageId=${message.id}');
-                  MessageReadersSheet.show(
-                    context: parentContext,
-                    roomId: roomId,
-                    messageId: message.id,
-                  );
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  /// Xoá tin nhắn (chỉ tin của mình). Hỏi xác nhận trước khi xoá — sau khi
-  /// xoá thành công tin biến mất ngay (không cần refresh lại lịch sử).
-  Future<void> _deleteMessage(BuildContext context, Message message) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final confirmed = await showChatConfirmDialog(
-      context: context,
-      config: ref.read(chatUiConfigProvider),
-      title: 'Xoá tin nhắn?',
-      message:
-          'Tin nhắn này sẽ bị xoá cho tất cả mọi người trong cuộc trò chuyện.',
-      confirmLabel: 'Xoá',
-      destructive: true,
-    );
-    if (!confirmed || !mounted) return;
-
-    final ok = await ref
-        .read(threadMessagesProvider.notifier)
-        .deleteMessage(message.id);
-    if (!mounted) return;
-    messenger.showSnackBar(SnackBar(
-      content: Text(ok ? 'Đã xoá tin nhắn' : 'Không thể xoá tin nhắn'),
-      duration: const Duration(seconds: 1),
-    ));
-  }
-
-  /// Mở dialog sửa tin nhắn — người gửi mới được sửa tin của mình.
-  Future<void> _editMessage(BuildContext context, Message message) async {
-    final messenger = ScaffoldMessenger.of(context);
-
-    final newContent = await showChatTextInputDialog(
-      context: context,
-      config: ref.read(chatUiConfigProvider),
-      title: 'Sửa tin nhắn',
-      hintText: 'Nội dung tin nhắn...',
-      initialValue: message.content,
-      maxLines: 5,
-    );
-
-    if (newContent == null ||
-        newContent.isEmpty ||
-        newContent == message.content) {
-      return;
-    }
-
-    final ok = await ref.read(threadMessagesProvider.notifier).updateMessage(
-          message.id,
-          newContent,
-        );
-    messenger.showSnackBar(SnackBar(
-      content: Text(ok ? 'Đã sửa tin nhắn' : 'Không thể sửa tin nhắn'),
-      duration: const Duration(seconds: 1),
-    ));
   }
 
   Future<void> _showReactionDetails(Message message) async {
@@ -1192,43 +849,6 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
         ),
       ),
     );
-  }
-
-  Future<void> _togglePin(
-      ScaffoldMessengerState messenger, String messageId, bool pin) async {
-    final notifier = ref.read(threadMessagesProvider.notifier);
-    PinnedMessage? replacedMessage;
-
-    if (pin) {
-      await notifier.refreshPinned();
-      if (!mounted || !messenger.mounted) return;
-      if (notifier.pinnedMessages.length >= 3) {
-        final replacement = await _selectPinnedMessageToReplace(
-          context,
-          notifier.pinnedMessages,
-        );
-        if (replacement == null || !mounted) return;
-
-        final removed = await _setMessagePin(
-          messenger,
-          replacement.messageId,
-          false,
-          showSuccess: false,
-        );
-        if (!removed || !mounted) return;
-        replacedMessage = replacement;
-      }
-    }
-
-    final ok = await _setMessagePin(messenger, messageId, pin);
-    if (!ok && replacedMessage != null && mounted) {
-      await _setMessagePin(
-        messenger,
-        replacedMessage.messageId,
-        true,
-        showSuccess: false,
-      );
-    }
   }
 
   @override
@@ -1420,220 +1040,43 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     final pinnedMessage =
         pinnedMessages.isNotEmpty ? pinnedMessages[_currentPinnedIndex] : null;
 
-    final theme = Theme.of(context);
     final chatConfig = ref.watch(chatUiConfigProvider);
+
+    final appBarWidget = _isSearching
+        ? (ThreadSearchBar(
+            controller: _searchController,
+            focusNode: _searchFocusNode,
+            config: chatConfig,
+            searchResultsCount: _searchResults.length,
+            currentSearchIndex: _currentSearchIndex,
+            isSearchingDeeper: _isSearchingDeeper,
+            onChanged: _onSearchInputChanged,
+            onSubmitted: (query) {
+              _searchDebounce?.cancel();
+              _performMessageSearch(query);
+            },
+            onClear: () {
+              _searchController.clear();
+              _performMessageSearch('');
+            },
+            onNext: _navigateSearchNext,
+            onPrev: _navigateSearchPrevious,
+            onClose: _closeMessageSearch,
+            onSearchResultsTap: () => _showSearchResultsSheet(context),
+          ) as PreferredSizeWidget)
+        : (ThreadAppBar(
+            roomName: displayTitle,
+            avatarUrl: displayAvatar,
+            config: chatConfig,
+            isSearching: _isSearching,
+            onSearchTap: _openMessageSearch,
+            onSettingsTap: () => _openRoomSettings(context, conversation),
+            onBackTap: () => Navigator.of(context).pop(),
+          ) as PreferredSizeWidget);
 
     return Scaffold(
       backgroundColor: chatConfig.roomBackgroundColor,
-      appBar: _isSearching
-          ? AppBar(
-              scrolledUnderElevation: 0,
-              surfaceTintColor: Colors.transparent,
-              backgroundColor: chatConfig.appBarBackgroundColor,
-              leading: IconButton(
-                icon: Icon(Icons.arrow_back_ios,
-                    color: chatConfig.iconColor ?? theme.iconTheme.color),
-                onPressed: _closeMessageSearch,
-              ),
-              titleSpacing: 0,
-              title: TextField(
-                controller: _searchController,
-                focusNode: _searchFocusNode,
-                cursorColor: Colors.black,
-                style: TextStyle(
-                  fontSize: 15,
-                  color: chatConfig.appBarIconColor ?? Colors.black87,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'Tìm tin nhắn...',
-                  hintStyle: TextStyle(
-                    fontSize: 15,
-                    color: (chatConfig.appBarIconColor ?? Colors.black87)
-                        .withValues(alpha: 0.5),
-                  ),
-                  border: InputBorder.none,
-                ),
-                textInputAction: TextInputAction.search,
-                onChanged: _onSearchInputChanged,
-                onSubmitted: (query) {
-                  _searchDebounce?.cancel();
-                  _performMessageSearch(query);
-                },
-              ),
-              actions: [
-                if (_searchController.text.isNotEmpty) ...[
-                  IconButton(
-                    icon: Icon(Icons.clear,
-                        size: 20,
-                        color: chatConfig.iconColor ?? theme.iconTheme.color),
-                    onPressed: () {
-                      _searchController.clear();
-                      _performMessageSearch('');
-                    },
-                  ),
-                  if (_isSearchingDeeper)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: Center(
-                        child: SkeletonBox(width: 36, height: 16, radius: 8),
-                      ),
-                    ),
-                  if (_searchResults.isNotEmpty) ...[
-                    GestureDetector(
-                      onTap: () => _showSearchResultsSheet(context),
-                      child: Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: (chatConfig.iconColor ??
-                                    theme.iconTheme.color ??
-                                    Colors.black87)
-                                .withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            '${_currentSearchIndex + 1}/${_searchResults.length}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color:
-                                  chatConfig.iconColor ?? theme.iconTheme.color,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      padding: EdgeInsets.zero,
-                      constraints:
-                          const BoxConstraints(minWidth: 32, minHeight: 32),
-                      icon: Icon(Icons.keyboard_arrow_up,
-                          color: chatConfig.iconColor ?? theme.iconTheme.color),
-                      tooltip: 'Tin mới hơn',
-                      onPressed: _navigateSearchNext,
-                    ),
-                    IconButton(
-                      padding: EdgeInsets.zero,
-                      constraints:
-                          const BoxConstraints(minWidth: 32, minHeight: 32),
-                      icon: Icon(Icons.keyboard_arrow_down,
-                          color: chatConfig.iconColor ?? theme.iconTheme.color),
-                      tooltip: 'Tin cũ hơn',
-                      onPressed: _navigateSearchPrevious,
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                ],
-              ],
-            )
-          : AppBar(
-              // Không cho Material 3 tint appbar khi content scroll qua bên dưới.
-              scrolledUnderElevation: 0,
-              surfaceTintColor: Colors.transparent,
-              backgroundColor: chatConfig.appBarBackgroundColor,
-              titleSpacing: 0,
-              title: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundColor: const Color(0xFFF0F2F5),
-                    backgroundImage: displayAvatar != null
-                        ? NetworkImage(displayAvatar)
-                        : null,
-                    child: displayAvatar == null
-                        ? Text(
-                            displayTitle.isNotEmpty
-                                ? displayTitle[0].toUpperCase()
-                                : '?',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              color: Colors.black87,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          )
-                        : null,
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      displayTitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                // IconButton(
-                //   icon: Icon(Icons.phone,
-                //       color: chatConfig.iconColor ?? theme.iconTheme.color),
-                //   onPressed: () {
-                //     // Action call UI
-                //   },
-                // ),
-                // IconButton(
-                //   icon: Icon(Icons.videocam,
-                //       color: chatConfig.iconColor ?? theme.iconTheme.color),
-                //   onPressed: () {
-                //     // Action callvideo UI
-                //   },
-                // ),
-                IconButton(
-                  icon: Icon(Icons.info_outline,
-                      color: chatConfig.iconColor ?? theme.iconTheme.color),
-                  onPressed: () async {
-                    final result = await Navigator.of(context).push<Object?>(
-                      MaterialPageRoute(
-                        builder: (_) => RoomSettingsScreen(
-                          roomId: roomId,
-                          currentUserId: widget.currentUserId,
-                          roomType:
-                              conversation?.type ?? ConversationType.direct,
-                          onRoomChanged: (updatedRoom) {
-                            ref
-                                .read(conversationListProvider.notifier)
-                                .updateRoomDetails(
-                                  updatedRoom.id,
-                                  roomName: updatedRoom.roomName,
-                                  avatarUrl: updatedRoom.avatarUrl,
-                                  participants: updatedRoom.participants,
-                                );
-                          },
-                        ),
-                      ),
-                    );
-                    if (result == 'open_search' && context.mounted) {
-                      _openMessageSearch();
-                      return;
-                    }
-                    if (result is Conversation && context.mounted) {
-                      // Room settings trả về conversation mới được tạo
-                      // ("Tạo cuộc trò chuyện") — mở luôn cuộc trò chuyện đó.
-                      await _openConversation(result);
-                      return;
-                    }
-                    if ((result == true || result == 'room_disbanded') &&
-                        context.mounted) {
-                      final route = ModalRoute.of(context);
-                      if (route != null &&
-                          route.isCurrent &&
-                          Navigator.of(context).canPop()) {
-                        Navigator.of(context).pop();
-                      }
-                      return;
-                    }
-                    if (context.mounted) {
-                      await ref
-                          .read(threadMessagesProvider.notifier)
-                          .refreshLatest();
-                    }
-                  },
-                ),
-              ],
-            ),
+      appBar: appBarWidget,
       body: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
@@ -1918,7 +1361,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                                   onReactionTap: () =>
                                       _showReactionDetails(message),
                                   onLongPress: () => _showMessageActionsSheet(
-                                    context,
+                                    this.context,
                                     message,
                                     canEdit: isMe,
                                   ),
@@ -2094,58 +1537,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     }
   }
 
-  Future<PinnedMessage?> _selectPinnedMessageToReplace(
-    BuildContext context,
-    List<PinnedMessage> pinnedMessages,
-  ) {
-    final config = ref.read(chatUiConfigProvider);
-    return showModalBottomSheet<PinnedMessage>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Thay thế tin nhắn đã ghim',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Đã đủ 3 tin. Chọn một tin bên dưới để gỡ và ghim tin mới.',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: config.secondaryTextColor ?? Colors.grey.shade600,
-                ),
-              ),
-              const SizedBox(height: 16),
-              ...pinnedMessages.map(
-                (pinned) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: PinnedMessageRow(
-                    pinnedMessage: pinned,
-                    config: config,
-                    actionIcon: Icons.swap_horiz_rounded,
-                    actionTooltip: 'Thay thế',
-                    onAction: () => Navigator.pop(sheetContext, pinned),
-                    onTap: () => Navigator.pop(sheetContext, pinned),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+
 
   void _showPinnedMessagesSheet(
     BuildContext context,

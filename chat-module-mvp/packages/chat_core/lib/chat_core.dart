@@ -1,8 +1,6 @@
-// Core: config / constants / error / network / shared domain & data
+// Core Public API: config / constants / error / network / domain entities & interfaces
 export 'core/config/chat_module_config.dart';
 export 'core/constants/chat_api_endpoints.dart';
-export 'core/data/models/chat_user_model.dart';
-export 'core/data/models/chat_member_model.dart';
 export 'core/domain/entities/chat_user.dart';
 export 'core/domain/entities/chat_member.dart';
 export 'core/error/chat_api_exception.dart';
@@ -58,36 +56,16 @@ export 'features/thread/domain/usecases/stop_watching_list_messages_usecase.dart
 export 'features/thread/domain/usecases/watch_list_messages_usecase.dart';
 export 'features/thread/domain/usecases/watch_new_messages_usecase.dart';
 
-// Data Models
-export 'features/auth_token/data/models/chat_access_token_model.dart';
-export 'features/conversation_list/data/models/conversation_model.dart';
-export 'features/thread/data/models/message_model.dart';
-export 'features/thread/data/models/pinned_message_model.dart';
-export 'features/thread/data/models/message_reader_model.dart';
-
-// Data Sources
+// Data Source Interfaces
 export 'features/auth_token/data/datasources/auth_token_remote_datasource.dart';
-export 'features/auth_token/data/datasources/auth_token_remote_datasource_impl.dart';
 export 'features/conversation_list/data/datasources/conversation_local_datasource.dart';
 export 'features/conversation_list/data/datasources/conversation_remote_datasource.dart';
-export 'features/conversation_list/data/datasources/conversation_remote_datasource_impl.dart';
 export 'features/thread/data/datasources/message_local_datasource.dart';
 export 'features/thread/data/datasources/message_remote_datasource.dart';
-export 'features/thread/data/datasources/message_remote_datasource_impl.dart';
 export 'features/thread/data/datasources/native_realtime_datasource.dart';
-export 'features/thread/data/datasources/native_realtime_datasource_impl.dart';
 export 'features/thread/data/datasources/websocket_realtime_datasource.dart';
-export 'features/thread/data/datasources/websocket_realtime_datasource_impl.dart';
-export 'features/thread/data/datasources/polling_engine.dart';
-
-// Data Repositories
-export 'features/auth_token/data/repositories/auth_token_repository_impl.dart';
-export 'features/conversation_list/data/repositories/conversation_repository_impl.dart';
-export 'features/thread/data/repositories/message_repository_impl.dart';
 
 // Contact Feature
 export 'features/contact/domain/repositories/contact_repository.dart';
 export 'features/contact/domain/usecases/search_contacts_usecase.dart';
 export 'features/contact/data/datasources/contact_remote_datasource.dart';
-export 'features/contact/data/datasources/contact_remote_datasource_impl.dart';
-export 'features/contact/data/repositories/contact_repository_impl.dart';

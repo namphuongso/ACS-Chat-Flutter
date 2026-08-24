@@ -4,6 +4,12 @@ import 'dart:math';
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'components/avatar_cache.dart';
+import 'components/identity_resolver.dart';
+import 'components/message_store.dart';
+import 'components/realtime_message_handler.dart';
+import 'components/system_message_enricher.dart';
+
 import '../providers/thread_providers.dart';
 import '../services/message_media_upload_service.dart';
 import '../services/thread_reactions_service.dart';
@@ -43,39 +49,16 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       state.myAcsUserId.isEmpty ? null : state.myAcsUserId;
 
   List<Message> get _messages => state.messages;
-  final Map<String, String> _userAvatarCache = {};
+  final AvatarCache _avatarCache = AvatarCache();
 
-  void cacheUserAvatar(String userId, String avatarUrl) {
-    if (userId.isEmpty || avatarUrl.isEmpty || !isNetworkAvatar(avatarUrl))
-      return;
-    final norm = AcsUserUtils.normalizeAcsId(userId);
-    if (norm.isNotEmpty) {
-      _userAvatarCache[norm] = avatarUrl;
-    }
-  }
+  void cacheUserAvatar(String userId, String avatarUrl) =>
+      _avatarCache.cacheUserAvatar(userId, avatarUrl);
 
-  String? getAvatarUrlForUser(String userId) {
-    if (userId.isEmpty) return null;
-    final norm = AcsUserUtils.normalizeAcsId(userId);
-    final cached = _userAvatarCache[norm];
-    if (cached != null && isNetworkAvatar(cached)) {
-      return cached;
-    }
-    return null;
-  }
+  String? getAvatarUrlForUser(String userId) =>
+      _avatarCache.getAvatarUrlForUser(userId);
 
-  void _cacheParticipantAvatars(List<ChatUser> participants) {
-    for (final p in participants) {
-      final av = p.avatarUrl;
-      if (av != null && isNetworkAvatar(av)) {
-        cacheUserAvatar(p.id, av);
-        final acs = p.acsUserId;
-        if (acs != null && acs.isNotEmpty) {
-          cacheUserAvatar(acs, av);
-        }
-      }
-    }
-  }
+  void _cacheParticipantAvatars(List<ChatUser> participants) =>
+      _avatarCache.cacheParticipantAvatars(participants);
 
   /// Tin đang ghim của room lấy từ BE — mọi user trong room đều thấy
   /// (ACS không mang thông tin ghim). Rỗng nếu chưa có ghim / BE lỗi.
@@ -284,6 +267,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
     Future.microtask(() {
       if (ref.mounted) {
         unawaited(_loadHistory());
+        unawaited(_loadPinnedMessages());
         unawaited(refreshReactions());
         unawaited(_fetchMembersIfNeeded());
       }
@@ -332,6 +316,12 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
   }
 
   void _handleMemberEventSignal(Message message) {
+    _realtimeHandler.handleRoomUpdatedSignal(roomId: roomId, message: message);
+    _realtimeHandler.handleMemberEventSignal(
+      message: message,
+      currentUserId: currentUserId,
+      myAcsUserId: myAcsUserId,
+    );
     final metadata = message.metadata;
     if (metadata == null) return;
     final eventType = metadata['eventType']?.toString();
@@ -609,41 +599,6 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
     }
   }
 
-  String _getDisplayName(String userId, String fallback) {
-    if (userId.isEmpty) return fallback;
-    final conversations = ref.read(conversationListProvider);
-    final conversation = conversations
-        .where((c) => c.id == roomId || c.threadId == threadId)
-        .firstOrNull;
-
-    if (conversation != null) {
-      final user = conversation.participants.where((p) {
-        if (AcsUserUtils.isSameAcsUser(userId, p.id) ||
-            AcsUserUtils.isSameAcsUser(userId, p.acsUserId ?? '')) {
-          return true;
-        }
-        if (fallback.trim().isNotEmpty &&
-            p.displayName.trim().isNotEmpty &&
-            fallback.trim() == p.displayName.trim()) {
-          return true;
-        }
-        return false;
-      }).firstOrNull;
-      if (user != null && user.displayName.isNotEmpty) {
-        return user.displayName;
-      }
-    }
-
-    for (final m in _messages.reversed) {
-      if (m.senderId.isNotEmpty && m.senderDisplayName.isNotEmpty) {
-        if (AcsUserUtils.isSameAcsUser(userId, m.senderId)) {
-          return m.senderDisplayName;
-        }
-      }
-    }
-    return fallback;
-  }
-
   void sendReadMessageIfNeeded() {
     final lastMsg = _messages
         .where((m) =>
@@ -673,7 +628,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         DateTime.now().difference(m.createdAt).abs().inSeconds < 10);
     if (isDuplicate) return;
 
-    final sysMsg = MessageModel(
+    final sysMsg = Message(
       id: id ?? 'sys_${DateTime.now().millisecondsSinceEpoch}',
       threadId: threadId,
       senderId: '',
@@ -686,101 +641,25 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
     state = state.copyWith(messages: _chronological([..._messages, sysMsg]));
   }
 
+  late final IdentityResolver _identityResolver =
+      IdentityResolver(currentUserId: currentUserId, ref: ref);
+  late final SystemMessageEnricher _enricher =
+      SystemMessageEnricher(identityResolver: _identityResolver);
+  late final MessageStore _messageStore = MessageStore(enricher: _enricher);
+  late final RealtimeMessageHandler _realtimeHandler =
+      RealtimeMessageHandler(ref: ref);
+
   Message _enrichSystemMessageContent(Message message) {
-    if (message.type != MessageType.system || message.metadata == null)
-      return message;
-    // Nếu tin nhắn hệ thống đã được format chứa bôi đậm tên (**), giữ nguyên nội dung không ghi đè
-    if (message.content.contains('**')) return message;
-
-    final metadata = message.metadata!;
-    final eventType = metadata['eventType']?.toString();
-    if (eventType == null) return message;
-
-    final payload = (metadata['payload'] is Map)
-        ? (metadata['payload'] as Map).cast<String, dynamic>()
-        : <String, dynamic>{};
-
-    final String? actorId = (metadata['actorUserId'] ??
-            metadata['actorId'] ??
-            metadata['addedByUserId'] ??
-            metadata['removedByUserId'] ??
-            metadata['changedByUserId'] ??
-            metadata['transferredByUserId'] ??
-            payload['actorUserId'] ??
-            payload['addedByUserId'] ??
-            payload['removedByUserId'] ??
-            payload['changedByUserId'])
-        ?.toString();
-    final String? targetId = (metadata['removedUserId'] ??
-            metadata['userId'] ??
-            metadata['memberUserId'] ??
-            metadata['targetUserId'] ??
-            metadata['toUserId'] ??
-            metadata['transferredToUserId'] ??
-            payload['removedUserId'] ??
-            payload['targetUserId'] ??
-            payload['toUserId'])
-        ?.toString();
-
-    final rawActorName = metadata['actorName']?.toString() ??
-        metadata['actorDisplayName']?.toString() ??
-        metadata['changedByName']?.toString() ??
-        metadata['addedByName']?.toString() ??
-        metadata['removedByName']?.toString() ??
-        metadata['transferredByName']?.toString() ??
-        metadata['updatedByName']?.toString() ??
-        payload['actorName']?.toString() ??
-        payload['actorDisplayName']?.toString() ??
-        payload['changedByName']?.toString() ??
-        payload['addedByName']?.toString() ??
-        payload['removedByName']?.toString();
-    final rawTargetName = metadata['removedUserName']?.toString() ??
-        metadata['removedUserDisplayName']?.toString() ??
-        metadata['targetName']?.toString() ??
-        metadata['targetDisplayName']?.toString() ??
-        metadata['userName']?.toString() ??
-        metadata['memberName']?.toString() ??
-        metadata['toUserName']?.toString() ??
-        metadata['newOwnerName']?.toString() ??
-        payload['removedUserName']?.toString() ??
-        payload['removedUserDisplayName']?.toString() ??
-        payload['targetName']?.toString() ??
-        payload['targetDisplayName']?.toString() ??
-        payload['userName']?.toString() ??
-        payload['toUserName']?.toString();
-
-    final actorName = (rawActorName != null && rawActorName.trim().isNotEmpty)
-        ? rawActorName.trim()
-        : (actorId != null && actorId.isNotEmpty
-            ? _getDisplayName(actorId, '')
-            : '');
-    final targetName =
-        (rawTargetName != null && rawTargetName.trim().isNotEmpty)
-            ? rawTargetName.trim()
-            : (targetId != null && targetId.isNotEmpty
-                ? _getDisplayName(targetId, '')
-                : '');
-
-    final isSelfRemoved = eventType == 'MemberRemoved' &&
-        targetId != null &&
-        (AcsUserUtils.isSameAcsUser(targetId, currentUserId) ||
-            (myAcsUserId != null &&
-                AcsUserUtils.isSameAcsUser(targetId, myAcsUserId!)));
-
-    final newContent = SystemMessageTextBuilder.build(
-      eventType: eventType,
-      json: metadata,
-      payload: payload,
-      actorFallback: actorName,
-      targetFallback: targetName,
-      joinedUserFallbacks: targetName.isNotEmpty ? [targetName] : const [],
-      isSelfRemoved: isSelfRemoved,
+    return _enricher.enrich(
+      roomId: roomId,
+      message: message,
+      currentUserId: currentUserId,
+      myAcsUserId: myAcsUserId,
     );
+  }
 
-    if (newContent != null && newContent.isNotEmpty) {
-      return message.copyWith(content: newContent);
-    }
-    return message;
+  String _getDisplayName(String userId, String fallback) {
+    return _identityResolver.getDisplayName(roomId, userId, fallback);
   }
 
   /// Cache-first: hiện tin đã lưu ngay lập tức, sau đó refresh từ remote
@@ -1002,6 +881,25 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
   /// Gọi lại sau khi ghim/bỏ ghim 1 tin để banner + cờ pin cập nhật.
   Future<void> refreshPinned() => _loadPinnedMessages();
 
+  /// Thực hiện ghim hoặc bỏ ghim tin nhắn qua API BE, đồng thời cập nhật UI state.
+  Future<bool> togglePinMessage(String messageId, bool pin) async {
+    try {
+      final ok = await _pinMessageUseCase(
+        threadId: threadId,
+        messageId: messageId,
+        pin: pin,
+      );
+      if (ok) {
+        updateMessagePin(messageId, pin);
+        await refreshPinned();
+      }
+      return ok;
+    } catch (e, st) {
+      ChatLogger.error('togglePinMessage failed', error: e, stackTrace: st);
+      return false;
+    }
+  }
+
   /// Gọi lại khi vừa có mạng trở lại — refresh lịch sử mới từ remote.
   Future<void> refreshHistory() => _loadHistory();
 
@@ -1097,51 +995,22 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
   /// lệch (vd realtime append tin mới vào cuối khiến cache không còn
   /// mới-nhất-trước) thì lần vào đầu render bị đảo ngược rồi mới tự sửa.
   List<Message> _chronological(Iterable<Message> msgs) {
-    final byId = <String, Message>{};
-    final systemSeenKeys = <String>{};
-    final result = <Message>[];
-
-    for (final raw in msgs) {
-      var m = raw;
-      if (m.type == MessageType.system && m.metadata != null) {
-        m = _enrichSystemMessageContent(m);
-      }
-
-      if (m.id.isNotEmpty) {
-        final existing = byId[m.id];
-        if (existing != null) {
-          if (m.pin || (m.metadata != null && m.metadata!.isNotEmpty)) {
-            byId[m.id] = m;
-          }
-          continue;
-        }
-        byId[m.id] = m;
-      }
-
-      if (m.type == MessageType.system) {
-        final minuteBucket = m.createdAt.millisecondsSinceEpoch ~/ 120000;
-        final key = 'sys_${m.content.trim()}_$minuteBucket';
-        if (systemSeenKeys.contains(key)) {
-          continue;
-        }
-        systemSeenKeys.add(key);
-      }
-
-      result.add(m);
-    }
-
-    result.sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    return result;
+    return _messageStore.sortChronological(
+      msgs.toList(),
+      roomId: roomId,
+      currentUserId: currentUserId,
+      myAcsUserId: myAcsUserId,
+    );
   }
 
   Future<void> sendMessage(
     String content, {
-    Map<String, dynamic>? metaData,
+    Map<String, dynamic>? metadata,
   }) async {
     final clientMsgId =
         'client-${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(10000)}';
     final mergedMetaData = {
-      if (metaData != null) ...metaData,
+      if (metadata != null) ...metadata,
       'clientMsgId': clientMsgId,
     };
 
@@ -1160,7 +1029,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
     state = state.copyWith(messages: [..._messages, optimistic]);
 
     Map<String, dynamic>? finalMetaData = mergedMetaData;
-    if (metaData == null) {
+    if (metadata == null) {
       final urlMatch = RegExp(r'(https?://[^\s<]+)').firstMatch(content);
       if (urlMatch != null) {
         final linkUrl = urlMatch.group(0)!;
@@ -1185,7 +1054,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         roomId: roomId,
         threadId: threadId,
         content: content,
-        metaData: finalMetaData,
+        metadata: finalMetaData,
       );
       if (!ref.mounted) return;
       // Thay optimistic bằng tin thật, đồng thời loại bản trùng cùng id

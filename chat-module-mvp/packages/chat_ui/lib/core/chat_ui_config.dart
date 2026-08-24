@@ -1,21 +1,22 @@
+import 'package:chat_core/chat_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+typedef MessageBubbleBuilder = Widget Function(
+  BuildContext context,
+  Message message,
+  bool isMe,
+  Widget defaultBubble,
+);
+
+typedef ChatInputBuilder = Widget Function(
+  BuildContext context,
+  void Function(String) onSendText,
+  Widget defaultInput,
+);
+
 /// Cấu hình màu sắc của module chat (màn hình trò chuyện) — do host app
 /// (vd NPP-Mobile) quyết định.
-///
-/// Mặc định dùng theme Material của host app. Nếu host muốn tự quyết màu,
-/// override `chatUiConfigProvider` với instance này — ví dụ:
-///
-/// ```dart
-/// chatUiConfigProvider.overrideWithValue(ChatUiConfig(
-///   sentBubbleColor: AppColors.chatSent,
-///   receivedBubbleColor: AppColors.chatReceived,
-///   roomBackgroundColor: AppColors.chatBackground,
-///   inputBarBackgroundColor: AppColors.chatInputBar,
-///   iconColor: AppColors.chatIcon,
-/// ));
-/// ```
 class ChatUiConfig {
   const ChatUiConfig({
     this.sentBubbleColor,
@@ -52,6 +53,8 @@ class ChatUiConfig {
     this.formFieldFillColor,
     this.formFieldBorderColor,
     this.onFileTap,
+    this.messageBubbleBuilder,
+    this.inputBuilder,
   });
 
   /// Màu nền bubble tin nhắn của mình (bên phải). `null` = fallback theme.
@@ -161,6 +164,12 @@ class ChatUiConfig {
     required int sizeBytes,
     required bool isLargeFile,
   })? onFileTap;
+
+  /// Slot builder tùy biến bong bóng tin nhắn (Level 2 Customization).
+  final MessageBubbleBuilder? messageBubbleBuilder;
+
+  /// Slot builder tùy biến thanh nhập liệu (Level 2 Customization).
+  final ChatInputBuilder? inputBuilder;
 }
 
 /// Provider cấu hình UI. Host app có thể override để đổi màu bubble.

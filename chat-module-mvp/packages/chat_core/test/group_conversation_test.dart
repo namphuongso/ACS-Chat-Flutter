@@ -1,4 +1,5 @@
 import 'package:chat_core/chat_core.dart';
+import 'package:chat_core/chat_core_impl.dart';
 import 'package:test/test.dart';
 
 class _MockConversationRemote implements ConversationRemoteDataSource {

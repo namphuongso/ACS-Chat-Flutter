@@ -13,7 +13,7 @@ abstract class MessageRemoteDataSource {
     required String roomId,
     required String threadId,
     required String content,
-    Map<String, dynamic>? metaData,
+    Map<String, dynamic>? metadata,
   });
 
   /// Sửa nội dung tin nhắn đã gửi — đi qua BE (`POST /chat/update-message`).
@@ -60,14 +60,23 @@ abstract class MessageRemoteDataSource {
     String? keyword,
   });
 
-  Future<List<ReactionConfig>> getReactionConfigs();
+  Future<List<ReactionConfig>> getReactionConfigs({
+    int pageIndex = 1,
+    int pageSize = 50,
+  });
 
   Future<List<MessageReaction>> getMessageReactions({
     required String roomId,
     required String messageId,
+    int pageIndex = 1,
+    int pageSize = 50,
   });
 
-  Future<List<MessageReactionSummary>> getRoomReactions(String roomId);
+  Future<List<MessageReactionSummary>> getRoomReactions(
+    String roomId, {
+    int pageIndex = 1,
+    int pageSize = 50,
+  });
 
   Future<bool> reactMessage({
     required String roomId,

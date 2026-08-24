@@ -41,22 +41,23 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     required String roomId,
     required String threadId,
     required String content,
-    Map<String, dynamic>? metaData,
+    Map<String, dynamic>? metadata,
   }) async {
     final appToken = await _appTokenProvider.getAppToken();
     final token = await _authTokenRepository.getAccessToken(roomId);
     final uri =
         Uri.parse('${_config.backendBaseUrl}${ChatApiEndpoints.sendMessage}');
-    final payloadMetadata = metaData ?? <String, dynamic>{};
+    final payloadMetadata = metadata ?? <String, dynamic>{};
     final requestContent = content.trim().isEmpty ? '[Hình ảnh]' : content.trim();
     final requestBody = jsonEncode({
       'roomId': roomId,
       'content': requestContent,
       'metaData': payloadMetadata,
+      'metadata': payloadMetadata,
     });
 
     final requestHeaders = _headers(appToken);
-    ChatLogger.logRequest('POST', uri, headers: requestHeaders, body: {'roomId': roomId, 'content': requestContent, 'metaData': payloadMetadata});
+    ChatLogger.logRequest('POST', uri, headers: requestHeaders, body: {'roomId': roomId, 'content': requestContent, 'metadata': payloadMetadata});
 
     final response = await _http
         .post(
@@ -89,7 +90,7 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       type: MessageType.text,
       createdAt: DateTime.now(),
       status: MessageDeliveryStatus.sent,
-      metadata: metaData,
+      metadata: metadata,
     );
   }
 
@@ -396,10 +397,20 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       );
     }
 
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final data = json['data'];
-    if (data is! List) return const [];
-    return data
+    final decoded = jsonDecode(response.body);
+    List rawList = const [];
+    if (decoded is List) {
+      rawList = decoded;
+    } else if (decoded is Map<String, dynamic>) {
+      final data = decoded['data'] ??
+          decoded['items'] ??
+          decoded['result'] ??
+          decoded['payload'];
+      if (data is List) {
+        rawList = data;
+      }
+    }
+    return rawList
         .whereType<Map<String, dynamic>>()
         .map(MessageReaderModel.fromJson)
         .toList();
@@ -475,11 +486,14 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
   }
 
   @override
-  Future<List<ReactionConfig>> getReactionConfigs() async {
+  Future<List<ReactionConfig>> getReactionConfigs({
+    int pageIndex = 1,
+    int pageSize = 50,
+  }) async {
     final appToken = await _appTokenProvider.getAppToken();
     final uri = Uri.parse(
       '${_config.backendBaseUrl}${ChatApiEndpoints.getReactionConfigs}',
-    ).replace(queryParameters: {'pageIndex': '1', 'pageSize': '50'});
+    ).replace(queryParameters: {'pageIndex': '$pageIndex', 'pageSize': '$pageSize'});
     final response = await _http.get(
       uri,
       headers: _headers(appToken),
@@ -510,6 +524,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
   Future<List<MessageReaction>> getMessageReactions({
     required String roomId,
     required String messageId,
+    int pageIndex = 1,
+    int pageSize = 50,
   }) async {
     final appToken = await _appTokenProvider.getAppToken();
     final uri = Uri.parse(
@@ -517,8 +533,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     ).replace(queryParameters: {
       'roomId': roomId,
       'messageId': messageId,
-      'pageIndex': '1',
-      'pageSize': '50',
+      'pageIndex': '$pageIndex',
+      'pageSize': '$pageSize',
     });
     final response = await _http.get(
       uri,
@@ -550,11 +566,15 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
   }
 
   @override
-  Future<List<MessageReactionSummary>> getRoomReactions(String roomId) async {
+  Future<List<MessageReactionSummary>> getRoomReactions(
+    String roomId, {
+    int pageIndex = 1,
+    int pageSize = 50,
+  }) async {
     final appToken = await _appTokenProvider.getAppToken();
     final uri = Uri.parse(
       '${_config.backendBaseUrl}${ChatApiEndpoints.getRoomReactions(roomId)}',
-    ).replace(queryParameters: {'pageIndex': '1', 'pageSize': '50'});
+    ).replace(queryParameters: {'pageIndex': '$pageIndex', 'pageSize': '$pageSize'});
     final response = await _http.get(
       uri,
       headers: _headers(appToken),

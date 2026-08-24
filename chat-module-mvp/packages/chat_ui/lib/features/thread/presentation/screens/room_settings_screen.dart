@@ -551,11 +551,15 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
           );
         }
       }
-    } catch (e) {
+    } catch (e, st) {
+      ChatLogger.error('Update room info error', error: e, stackTrace: st);
       if (mounted) {
         Navigator.pop(context); // Tắt loading
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Lỗi: $e')),
+        showChatToast(
+          context,
+          message: 'Không thể sửa thông tin phòng',
+          isError: true,
+          config: ref.read(chatUiConfigProvider),
         );
       }
     }

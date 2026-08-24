@@ -206,27 +206,21 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
     }
     _lastVisibleMessageId = lastVisibleMessageId;
     if (_serverConnected) {
-      final targetRooms = <String>{};
-      if (roomId != null && roomId.isNotEmpty) {
-        targetRooms.add(roomId);
-      }
-      targetRooms.addAll(_activeRoomIds);
-      targetRooms.addAll(_watchedRoomIds);
-      targetRooms.addAll(_threadIdsByRoom.keys);
+      final targetRoomId = (roomId != null && roomId.isNotEmpty)
+          ? roomId
+          : (_activeRoomIds.isNotEmpty ? _activeRoomIds.first : null);
 
-      if (targetRooms.isEmpty) {
+      if (targetRoomId == null || targetRoomId.isEmpty) {
         ChatLogger.log(
-            '[sendReadMessage] Skipped: no target rooms for $lastVisibleMessageId');
+            '[sendReadMessage] Skipped: no target room for $lastVisibleMessageId');
         return;
       }
 
-      for (final rId in targetRooms) {
-        _send({
-          'type': 'read',
-          'roomId': rId,
-          'lastVisibleMessageId': lastVisibleMessageId,
-        });
-      }
+      _send({
+        'type': 'read',
+        'roomId': targetRoomId,
+        'lastVisibleMessageId': lastVisibleMessageId,
+      });
     } else {
       ChatLogger.log('[sendReadMessage] Skipped: _serverConnected is false');
     }

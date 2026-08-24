@@ -1,4 +1,5 @@
 import 'package:chat_core/chat_core.dart';
+import 'package:chat_core/chat_core_impl.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../shared/presentation/providers/shared_providers.dart';
