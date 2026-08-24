@@ -662,12 +662,14 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     );
     final payload = <String, dynamic>{
       'messageId': messageId,
+      'id': messageId,
       'roomId': roomId,
       'threadId': threadId,
     };
     if (reactionCode.isNotEmpty && reactionCode != '0') {
       payload['reactionId'] = reactionCode;
       payload['reactionCode'] = reactionCode;
+      payload['code'] = reactionCode;
     }
     final headers = _headers(appToken);
     final body = jsonEncode(payload);

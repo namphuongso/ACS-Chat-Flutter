@@ -62,11 +62,12 @@ class MessageActionSheet {
         return StatefulBuilder(builder: (overlayContext, setOverlayState) {
           Future<void> selectReaction(int index) async {
             if (index < 0 || index >= reactionConfigs.length) return;
-            final selectedCode = reactionConfigs[index].code;
+            final targetCode = reactionConfigs[index].code;
+            final codeToSend = (myReactionCode == targetCode) ? '' : targetCode;
             Navigator.pop(dialogContext);
             bool ok = false;
             try {
-              ok = await notifier.reactMessage(message.id, selectedCode);
+              ok = await notifier.reactMessage(message.id, codeToSend);
             } catch (_) {}
             if (!context.mounted) return;
             if (!ok) {
