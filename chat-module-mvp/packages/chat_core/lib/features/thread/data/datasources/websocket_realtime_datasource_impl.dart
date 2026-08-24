@@ -6,9 +6,9 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../../../../core/config/chat_module_config.dart';
 import '../../../../core/utils/chat_logger.dart';
 import '../../../auth_token/domain/repositories/chat_auth_token_provider.dart';
-import '../../domain/entities/message.dart';
-import '../../domain/services/system_message_text.dart';
 import '../models/message_model.dart';
+import 'websocket_event_dispatcher.dart';
+import 'websocket_event_parser.dart';
 import 'websocket_realtime_datasource.dart';
 
 /// Alias tương thích ngược cho tên cũ.
@@ -26,10 +26,9 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
   final ChatModuleConfig _config;
   final ChatAuthTokenProvider? _appTokenProvider;
   final String _deviceId;
+  final WebSocketEventDispatcher _dispatcher = WebSocketEventDispatcher();
 
-  final Map<String, StreamController<MessageModel>> _threadControllers = {};
   final Map<String, String> _threadIdsByRoom = {};
-  StreamController<MessageModel>? _listController;
 
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _socketSubscription;
@@ -160,439 +159,16 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
         return;
       }
       if (type != 'room_event') return;
-      _handleRoomEvent(event);
+      
+      final parsedMessage = WebSocketEventParser.parseRoomEvent(
+        event,
+        threadIdsByRoom: _threadIdsByRoom,
+      );
+      if (parsedMessage != null) {
+        _dispatcher.emit(parsedMessage);
+      }
     } catch (error) {
       ChatLogger.log('Ignored malformed WebSocket event: $error raw=$raw');
-    }
-  }
-
-  void _handleRoomEvent(Map<String, dynamic> event) {
-    final eventType = event['eventType']?.toString();
-    final payload = event['payload'];
-    if (payload is! Map) return;
-    final data = payload.cast<String, dynamic>();
-    final roomId = event['roomId']?.toString() ?? data['roomId']?.toString();
-    final threadId = data['threadId']?.toString() ??
-        (roomId == null ? null : _threadIdsByRoom[roomId] ?? roomId);
-
-    if (threadId == null && roomId == null) return;
-    final targetId = threadId ?? roomId!;
-
-    if (eventType == 'MessageDeleted') {
-      final msgId = (data['messageId'] ?? data['MessageId'] ?? '').toString();
-      if (msgId.isEmpty) return;
-      final deletedAtRaw = data['deletedAtUtc']?.toString();
-      final deletedAt = deletedAtRaw != null
-          ? DateTime.tryParse(deletedAtRaw)
-          : DateTime.now();
-      final signal = MessageModel(
-        id: msgId,
-        threadId: targetId,
-        senderId: (data['deletedBy'] ?? '').toString(),
-        senderDisplayName: '',
-        content: '(Tin nhắn đã bị xoá)',
-        type: MessageType.text,
-        createdAt: deletedAt ?? DateTime.now(),
-        deletedOn: deletedAt,
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'MessagePinned' || eventType == 'MessageUnpinned') {
-      final msgId = (data['messageId'] ?? data['MessageId'] ?? '').toString();
-      if (msgId.isEmpty) return;
-      final isPinned = eventType == 'MessagePinned';
-      final signal = MessageModel(
-        id: msgId,
-        threadId: targetId,
-        senderId: (data['actorId'] ?? '').toString(),
-        senderDisplayName: (data['actorName'] ?? '').toString(),
-        content: isPinned ? 'pin' : 'unpin',
-        type: MessageType.messagePinUpdate,
-        createdAt: DateTime.now(),
-        pin: isPinned,
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'MessageReacted' ||
-        eventType == 'MessageUnreacted' ||
-        eventType == 'MessageReactionRemoved' ||
-        eventType == 'MessageReactionUpdated' ||
-        (eventType != null && eventType.toLowerCase().contains('react'))) {
-      final msgId = (data['messageId'] ?? data['MessageId'] ?? '').toString();
-      final signal = MessageModel(
-        id: msgId,
-        threadId: targetId,
-        senderId: (data['actorId'] ?? '').toString(),
-        senderDisplayName: (data['actorName'] ?? '').toString(),
-        content: data['reactionCode']?.toString() ?? '',
-        type: MessageType.reactionUpdate,
-        createdAt: DateTime.now(),
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'NewMessage' || eventType == 'MessageUpdated') {
-      final rawMessage = data['message'] is Map
-          ? (data['message'] as Map).cast<String, dynamic>()
-          : data;
-      final messageId = rawMessage['MessageId'] ??
-          rawMessage['messageId'] ??
-          rawMessage['id'];
-      if (messageId == null) return;
-      final usesRealtimeSchema = rawMessage.containsKey('MessageId') ||
-          rawMessage.containsKey('CreatedDate') ||
-          rawMessage.containsKey('SenderId');
-      final message = usesRealtimeSchema
-          ? MessageModel.fromWebSocketJson(rawMessage, threadId: targetId)
-          : MessageModel.fromServerJson(rawMessage, threadId: targetId);
-      _emit(message, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'RoomCreated') {
-      final createdByName = (data['createdByName'] ?? '').toString();
-      final content = SystemMessageTextBuilder.build(
-            eventType: 'RoomCreated',
-            json: data,
-            actorFallback: createdByName,
-          ) ??
-          'Phòng mới đã được tạo';
-      final signal = MessageModel(
-        id: 'room_created_${DateTime.now().millisecondsSinceEpoch}',
-        threadId: targetId,
-        senderId: (data['createdByUserId'] ?? '').toString(),
-        senderDisplayName: createdByName,
-        content: content,
-        type: MessageType.system,
-        createdAt: DateTime.now(),
-        metadata: {'eventType': 'RoomCreated', ...data},
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'RoomUpdated') {
-      final payload = (data['payload'] is Map)
-          ? (data['payload'] as Map).cast<String, dynamic>()
-          : <String, dynamic>{};
-      final roomName =
-          (data['roomName'] ?? payload['roomName'] ?? '').toString().trim();
-      final avatarUrl =
-          (data['avatarUrl'] ?? payload['avatarUrl'] ?? '').toString().trim();
-      final actorName = (data['actorName'] ??
-              data['updatedByName'] ??
-              data['changedByName'] ??
-              payload['actorName'] ??
-              payload['updatedByName'] ??
-              payload['changedByName'] ??
-              '')
-          .toString()
-          .trim();
-      final content = SystemMessageTextBuilder.build(
-            eventType: 'RoomUpdated',
-            json: data,
-            payload: payload,
-            actorFallback: actorName,
-          ) ??
-          'Thông tin nhóm đã được cập nhật';
-
-      final eventId = (data['id'] ??
-              data['eventId'] ??
-              payload['id'] ??
-              payload['eventId'] ??
-              'room_updated_${DateTime.now().millisecondsSinceEpoch}')
-          .toString();
-      final signal = MessageModel(
-        id: eventId,
-        threadId: targetId,
-        senderId: '',
-        senderDisplayName: actorName,
-        content: content,
-        type: MessageType.system,
-        createdAt: DateTime.now(),
-        metadata: {
-          'eventType': 'RoomUpdated',
-          'id': eventId,
-          'roomName': roomName,
-          'avatarUrl': avatarUrl,
-          'actorName': actorName,
-          ...data,
-        },
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'RoomDisbanded') {
-      final content = SystemMessageTextBuilder.build(
-            eventType: 'RoomDisbanded',
-            json: data,
-          ) ??
-          'Phòng chat đã bị giải tán';
-      final signal = MessageModel(
-        id: 'room_disbanded_${DateTime.now().millisecondsSinceEpoch}',
-        threadId: targetId,
-        senderId: (data['disbandedBy'] ?? '').toString(),
-        senderDisplayName: '',
-        content: content,
-        type: MessageType.roomDisbanded,
-        createdAt: DateTime.now(),
-        metadata: {'eventType': 'RoomDisbanded', ...data},
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'RoomRoleChanged') {
-      final payload = (data['payload'] is Map)
-          ? (data['payload'] as Map).cast<String, dynamic>()
-          : <String, dynamic>{};
-      final actorName = (data['actorName'] ??
-              data['changedByName'] ??
-              data['actorDisplayName'] ??
-              data['fromUserName'] ??
-              payload['actorName'] ??
-              payload['changedByName'] ??
-              payload['actorDisplayName'] ??
-              '')
-          .toString()
-          .trim();
-      final targetName = (payload['userName'] ??
-              payload['targetName'] ??
-              payload['userDisplayName'] ??
-              payload['memberName'] ??
-              payload['memberUserName'] ??
-              payload['toUserName'] ??
-              data['targetName'] ??
-              data['memberName'] ??
-              data['userName'] ??
-              data['memberUserName'] ??
-              data['userDisplayName'] ??
-              data['toUserName'] ??
-              '')
-          .toString()
-          .trim();
-      final content = SystemMessageTextBuilder.build(
-            eventType: 'RoomRoleChanged',
-            json: data,
-            payload: payload,
-            actorFallback: actorName,
-            targetFallback: targetName,
-          ) ??
-          'Quyền Admin trong phòng đã thay đổi';
-
-      final signal = MessageModel(
-        id: 'room_role_${DateTime.now().millisecondsSinceEpoch}',
-        threadId: targetId,
-        senderId: actorName,
-        senderDisplayName: '',
-        content: content,
-        type: MessageType.system,
-        createdAt: DateTime.now(),
-        metadata: {'eventType': 'RoomRoleChanged', ...data},
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'RoomOwnershipTransferred') {
-      final payload = (data['payload'] is Map)
-          ? (data['payload'] as Map).cast<String, dynamic>()
-          : <String, dynamic>{};
-      final actorName = (data['actorName'] ??
-              data['transferredByName'] ??
-              data['fromUserName'] ??
-              payload['actorName'] ??
-              payload['transferredByName'] ??
-              payload['fromUserName'] ??
-              '')
-          .toString()
-          .trim();
-      final targetName = (payload['toUserName'] ??
-              payload['targetName'] ??
-              payload['newOwnerName'] ??
-              data['targetName'] ??
-              data['toUserName'] ??
-              data['newOwnerName'] ??
-              '')
-          .toString()
-          .trim();
-
-      final content = SystemMessageTextBuilder.build(
-            eventType: 'RoomOwnershipTransferred',
-            json: data,
-            payload: payload,
-            actorFallback: actorName,
-            targetFallback: targetName,
-          ) ??
-          'Quyền Trưởng phòng đã được chuyển giao';
-
-      final signal = MessageModel(
-        id: 'room_owner_${DateTime.now().millisecondsSinceEpoch}',
-        threadId: targetId,
-        senderId: '',
-        senderDisplayName: '',
-        content: content,
-        type: MessageType.system,
-        createdAt: DateTime.now(),
-        metadata: {'eventType': 'RoomOwnershipTransferred', ...data},
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'RoomPinned' || eventType == 'RoomUnpinned') {
-      final isPinned = eventType == 'RoomPinned';
-      final signal = MessageModel(
-        id: 'room_pin_${DateTime.now().millisecondsSinceEpoch}',
-        threadId: targetId,
-        senderId: '',
-        senderDisplayName: '',
-        content: isPinned ? 'room_pinned' : 'room_unpinned',
-        type: isPinned
-            ? MessageType.roomPinnedUpdate
-            : MessageType.roomUnpinnedUpdate,
-        createdAt: DateTime.now(),
-        metadata: {
-          'eventType': eventType,
-          'isPinned': isPinned,
-          'roomId': targetId
-        },
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'MemberJoined') {
-      final payload = (data['payload'] is Map)
-          ? (data['payload'] as Map).cast<String, dynamic>()
-          : <String, dynamic>{};
-      final actorName = (data['actorName'] ??
-              data['addedByName'] ??
-              payload['actorName'] ??
-              payload['addedByName'] ??
-              '')
-          .toString();
-      final content = SystemMessageTextBuilder.build(
-            eventType: 'MemberJoined',
-            json: data,
-            payload: payload,
-            actorFallback: actorName,
-          ) ??
-          'Thành viên mới đã vào nhóm';
-      final signal = MessageModel(
-        id: 'member_joined_${DateTime.now().millisecondsSinceEpoch}',
-        threadId: targetId,
-        senderId:
-            (data['actorUserId'] ?? data['addedByUserId'] ?? '').toString(),
-        senderDisplayName: actorName,
-        content: content,
-        type: MessageType.system,
-        createdAt: DateTime.now(),
-        metadata: {'eventType': 'MemberJoined', ...data},
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'MemberLeft') {
-      final payload = (data['payload'] is Map)
-          ? (data['payload'] as Map).cast<String, dynamic>()
-          : <String, dynamic>{};
-      final actorName = (data['actorName'] ??
-              data['userName'] ??
-              payload['actorName'] ??
-              payload['userName'] ??
-              '')
-          .toString();
-      final content = SystemMessageTextBuilder.build(
-            eventType: 'MemberLeft',
-            json: data,
-            payload: payload,
-            actorFallback: actorName,
-          ) ??
-          'Một thành viên đã rời khỏi nhóm';
-      final signal = MessageModel(
-        id: 'member_left_${DateTime.now().millisecondsSinceEpoch}',
-        threadId: targetId,
-        senderId: (data['userId'] ?? data['actorUserId'] ?? '').toString(),
-        senderDisplayName: actorName,
-        content: content,
-        type: MessageType.system,
-        createdAt: DateTime.now(),
-        metadata: {'eventType': 'MemberLeft', ...data},
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-
-    if (eventType == 'MemberRemoved') {
-      final payload = (data['payload'] is Map)
-          ? (data['payload'] as Map).cast<String, dynamic>()
-          : <String, dynamic>{};
-      final removedUserId =
-          (data['removedUserId'] ?? payload['removedUserId'] ?? '').toString();
-      final removedByUserId = (data['removedByUserId'] ??
-              data['actorUserId'] ??
-              payload['removedByUserId'] ??
-              payload['actorUserId'] ??
-              '')
-          .toString();
-      final actorName = (data['actorName'] ??
-              payload['actorName'] ??
-              payload['removedByName'] ??
-              '')
-          .toString();
-      final removedUserName = (data['removedUserName'] ??
-              payload['removedUserName'] ??
-              payload['targetName'] ??
-              '')
-          .toString();
-
-      final content = SystemMessageTextBuilder.build(
-            eventType: 'MemberRemoved',
-            json: data,
-            payload: payload,
-            actorFallback: actorName,
-            targetFallback: removedUserName,
-          ) ??
-          'Một thành viên đã bị xóa khỏi nhóm';
-
-      final signal = MessageModel(
-        id: 'member_removed_${DateTime.now().millisecondsSinceEpoch}',
-        threadId: targetId,
-        senderId: removedByUserId,
-        senderDisplayName: actorName,
-        content: content,
-        type: MessageType.system,
-        createdAt: DateTime.now(),
-        metadata: {
-          'eventType': 'MemberRemoved',
-          'removedUserId': removedUserId,
-          'removedByUserId': removedByUserId,
-          'removedUserName': removedUserName,
-          'actorName': actorName,
-          ...data
-        },
-      );
-      _emit(signal, roomId: roomId);
-      return;
-    }
-  }
-
-  void _emit(MessageModel message, {String? roomId}) {
-    final threadController = _threadControllers[message.threadId];
-    if (threadController != null && !threadController.isClosed) {
-      threadController.add(message);
-    }
-    final listController = _listController;
-    if (listController != null && !listController.isClosed) {
-      listController.add(message);
     }
   }
 
@@ -771,26 +347,17 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
       unawaited(_ensureConnected());
     }
 
-    final existing = _threadControllers[threadId];
-    if (existing != null) return existing.stream;
-
-    final controller = StreamController<MessageModel>.broadcast();
-    _threadControllers[threadId] = controller;
-    return controller.stream;
+    return _dispatcher.watchNewMessages(threadId);
   }
 
   @override
   Stream<MessageModel> watchListMessages() {
-    final existing = _listController;
-    if (existing != null) return existing.stream;
-    _listController = StreamController<MessageModel>.broadcast();
     unawaited(_ensureConnected());
-    return _listController!.stream;
+    return _dispatcher.watchListMessages();
   }
 
   @override
   Future<void> stopWatching(String threadId) async {
-    final controller = _threadControllers.remove(threadId);
     final roomIds = _threadIdsByRoom.entries
         .where((entry) => entry.value == threadId)
         .map((entry) => entry.key)
@@ -803,14 +370,22 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
         _send({'type': 'leave_room', 'roomId': roomId});
       }
     }
-    await controller?.close();
+    await _dispatcher.stopWatching(threadId);
+    _checkIdleSocketClose();
   }
 
   @override
   Future<void> stopWatchingList() async {
-    final controller = _listController;
-    _listController = null;
-    await controller?.close();
+    await _dispatcher.stopWatchingList();
+    _checkIdleSocketClose();
+  }
+
+  void _checkIdleSocketClose() {
+    if (_dispatcher.threadControllers.isEmpty &&
+        _threadIdsByRoom.isEmpty &&
+        _watchedRoomIds.isEmpty) {
+      unawaited(_closeSocket());
+    }
   }
 
   Future<void> _closeSocket() async {
@@ -829,12 +404,7 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
   Future<void> dispose() async {
     _disposed = true;
     await _closeSocket();
-    for (final controller in _threadControllers.values) {
-      await controller.close();
-    }
-    _threadControllers.clear();
+    await _dispatcher.dispose();
     _threadIdsByRoom.clear();
-    await _listController?.close();
-    _listController = null;
   }
 }

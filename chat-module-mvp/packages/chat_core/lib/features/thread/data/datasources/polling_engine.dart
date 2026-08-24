@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import '../../../../core/utils/chat_logger.dart';
 import '../../domain/entities/message.dart';
 
 /// Implement đúng biện pháp giảm thiểu rủi ro rate-limit ở mục 5 kế hoạch
@@ -65,8 +66,7 @@ class PollingEngine<T extends Message> {
       }
     } catch (e) {
       _consecutiveErrors++;
-      // Không rethrow — polling phải tự phục hồi, không được làm chết
-      // luồng UI đang lắng nghe stream này.
+      ChatLogger.warn('Polling failed for threadId=$threadId (attempt $_consecutiveErrors)', error: e);
     } finally {
       _scheduleNext();
     }

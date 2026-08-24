@@ -193,6 +193,12 @@ class _RoomMembersScreenState extends ConsumerState<RoomMembersScreen> {
                                           !member.isOwner &&
                                           !member.isAdmin))
                               ? PopupMenuButton<String>(
+                                  color: Colors.white,
+                                  surfaceTintColor: Colors.transparent,
+                                  elevation: 6,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
                                   onSelected: (value) =>
                                       _handleMemberAction(value, member),
                                   itemBuilder: (context) {

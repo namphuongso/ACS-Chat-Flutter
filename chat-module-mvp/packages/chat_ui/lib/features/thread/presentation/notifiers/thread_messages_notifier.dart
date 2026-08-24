@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -233,7 +234,10 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       final pending = _messages
           .where((m) =>
               m.status == MessageDeliveryStatus.sending &&
-              m.content == message.content)
+              ((m.metadata?['clientMsgId'] != null &&
+                      message.metadata?['clientMsgId'] != null)
+                  ? m.metadata!['clientMsgId'] == message.metadata!['clientMsgId']
+                  : m.content == message.content))
           .firstOrNull;
       if (pending != null) {
         final mergedMessage =
@@ -259,7 +263,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       } else {
         list.insert(insertAt, message);
       }
-      state = state.copyWith(messages: list);
+      state = state.copyWith(messages: _chronological(list));
       sendReadMessageIfNeeded();
 
       final isMediaPlaceholder = message.content == '[Hình ảnh]' ||
@@ -679,7 +683,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       createdAt: DateTime.now(),
       metadata: metadata,
     );
-    state = state.copyWith(messages: [..._messages, sysMsg]);
+    state = state.copyWith(messages: _chronological([..._messages, sysMsg]));
   }
 
   Message _enrichSystemMessageContent(Message message) {
@@ -787,7 +791,19 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
   /// chậm trong khoảng 8-15s, timeout 8s cũ bắn trước và bỏ qua token
   /// khiến myAcsUserId mãi null → mọi tin hiện sai phía. Timeout 20s để
   /// nhường cho HTTP client 15s là ngưỡng chặn thật; khi fail vẫn hiện cache.
+  bool _isLoadingHistory = false;
+
   Future<void> _loadHistory() async {
+    if (_isLoadingHistory) return;
+    _isLoadingHistory = true;
+    try {
+      await _executeLoadHistory();
+    } finally {
+      _isLoadingHistory = false;
+    }
+  }
+
+  Future<void> _executeLoadHistory() async {
     // 0. Khôi phục danh tính đã lưu trên disk (acsUserId dùng chung mọi room).
     //    Đọc local nhanh, không cần mạng → tin render đúng phía ngay lần vào
     //    đầu, không kẹt spinner chờ join-room.
@@ -877,12 +893,20 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
           return false;
         }
         if (m.type == MessageType.system) {
-          final isAlreadyInRemote = remoteItems.any((rm) =>
-              rm.type == MessageType.system &&
-              (rm.content == m.content ||
-                  (rm.metadata?['id'] != null &&
-                      rm.metadata?['id'] == m.metadata?['id']) ||
-                  (rm.id.isNotEmpty && rm.id == m.id)));
+          final isAlreadyInRemote = remoteItems.any((rm) {
+            if (rm.type != MessageType.system) return false;
+            final enrichedRm = rm.metadata != null ? _enrichSystemMessageContent(rm) : rm;
+            final sameContent = enrichedRm.content == m.content || rm.content == m.content;
+            final sameMetadataId = rm.metadata?['id'] != null &&
+                m.metadata?['id'] != null &&
+                rm.metadata?['id'] == m.metadata?['id'];
+            final sameId = rm.id.isNotEmpty && rm.id == m.id;
+            final sameEventType = rm.metadata?['eventType'] != null &&
+                m.metadata?['eventType'] != null &&
+                rm.metadata?['eventType'] == m.metadata?['eventType'] &&
+                rm.createdAt.difference(m.createdAt).abs().inSeconds < 120;
+            return sameContent || sameMetadataId || sameId || sameEventType;
+          });
           if (isAlreadyInRemote) return false;
         }
         return true;
@@ -940,8 +964,14 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         return true;
       }).toList();
       if (ref.mounted && visible.isNotEmpty && _messages.isEmpty) {
+        final enrichedVisible = visible.map((m) {
+          if (m.type == MessageType.system && m.metadata != null) {
+            return _enrichSystemMessageContent(m);
+          }
+          return m;
+        }).toList();
         state = state.copyWith(
-          messages: _chronological(visible),
+          messages: _chronological(enrichedVisible),
           historyLoaded: true,
         );
         sendReadMessageIfNeeded();
@@ -1067,15 +1097,54 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
   /// lệch (vd realtime append tin mới vào cuối khiến cache không còn
   /// mới-nhất-trước) thì lần vào đầu render bị đảo ngược rồi mới tự sửa.
   List<Message> _chronological(Iterable<Message> msgs) {
-    final list = msgs.toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    return list;
+    final byId = <String, Message>{};
+    final systemSeenKeys = <String>{};
+    final result = <Message>[];
+
+    for (final raw in msgs) {
+      var m = raw;
+      if (m.type == MessageType.system && m.metadata != null) {
+        m = _enrichSystemMessageContent(m);
+      }
+
+      if (m.id.isNotEmpty) {
+        final existing = byId[m.id];
+        if (existing != null) {
+          if (m.pin || (m.metadata != null && m.metadata!.isNotEmpty)) {
+            byId[m.id] = m;
+          }
+          continue;
+        }
+        byId[m.id] = m;
+      }
+
+      if (m.type == MessageType.system) {
+        final minuteBucket = m.createdAt.millisecondsSinceEpoch ~/ 120000;
+        final key = 'sys_${m.content.trim()}_$minuteBucket';
+        if (systemSeenKeys.contains(key)) {
+          continue;
+        }
+        systemSeenKeys.add(key);
+      }
+
+      result.add(m);
+    }
+
+    result.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return result;
   }
 
   Future<void> sendMessage(
     String content, {
     Map<String, dynamic>? metaData,
   }) async {
+    final clientMsgId =
+        'client-${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(10000)}';
+    final mergedMetaData = {
+      if (metaData != null) ...metaData,
+      'clientMsgId': clientMsgId,
+    };
+
     final optimisticId = 'local-${DateTime.now().microsecondsSinceEpoch}';
     final optimistic = Message(
       id: optimisticId,
@@ -1086,19 +1155,19 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       type: MessageType.text,
       createdAt: DateTime.now(),
       status: MessageDeliveryStatus.sending,
-      metadata: metaData,
+      metadata: mergedMetaData,
     );
     state = state.copyWith(messages: [..._messages, optimistic]);
 
-    var finalMetaData = metaData;
-    if (finalMetaData == null) {
+    Map<String, dynamic>? finalMetaData = mergedMetaData;
+    if (metaData == null) {
       final urlMatch = RegExp(r'(https?://[^\s<]+)').firstMatch(content);
       if (urlMatch != null) {
         final linkUrl = urlMatch.group(0)!;
         try {
           final previewData = await LinkPreviewFetcher.fetch(linkUrl)
               .timeout(const Duration(milliseconds: 1500));
-          finalMetaData = previewData.toJson();
+          finalMetaData = {...mergedMetaData, ...previewData.toJson()};
           if (ref.mounted) {
             final updatedMessages = _messages
                 .map((m) => m.id == optimisticId

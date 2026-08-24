@@ -69,8 +69,8 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
         .map((e) => ConversationModel.fromJson(e as Map<String, dynamic>))
         .toList();
 
-    // The API does not return pagination metadata, we infer hasMore from length
-    final hasMore = items.isNotEmpty;
+    // Infer hasMore by checking if full page limit was returned
+    final hasMore = items.length >= limit;
 
     return (
       items: items,

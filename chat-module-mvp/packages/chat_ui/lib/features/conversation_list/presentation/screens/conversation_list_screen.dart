@@ -133,10 +133,24 @@ class _ConversationListState extends ConsumerState<ConversationList>
   void _showConversationMenu(Conversation conversation) {
     showModalBottomSheet<void>(
       context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 8),
             ListTile(
               title: Text(conversation.pin
                   ? 'Bỏ ghim cuộc trò chuyện'
@@ -148,6 +162,7 @@ class _ConversationListState extends ConsumerState<ConversationList>
                 _togglePin(conversation);
               },
             ),
+            const SizedBox(height: 8),
           ],
         ),
       ),

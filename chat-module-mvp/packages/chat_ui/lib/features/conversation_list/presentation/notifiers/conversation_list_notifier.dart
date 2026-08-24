@@ -163,8 +163,9 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
       _cursor = result.cursor;
       _startListRealtime();
       ref.read(conversationListLoadingProvider.notifier).set(false);
-    } catch (_) {
-      // Offline / lỗi mạng — repository đã trả cache, hoặc giữ nguyên state.
+    } catch (e, st) {
+      ChatLogger.error('Error refreshing conversation list',
+          error: e, stackTrace: st);
       if (ref.mounted) {
         ref.read(conversationListLoadingProvider.notifier).set(false);
       }

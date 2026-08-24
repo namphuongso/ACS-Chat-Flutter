@@ -403,8 +403,7 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
 
       String? avatarTypeCode;
       try {
-        final updateTypes =
-            await ref.read(getRoomUpdateTypesUseCaseProvider)();
+        final updateTypes = await ref.read(getRoomUpdateTypesUseCaseProvider)();
         final avatarType = updateTypes
             .where((t) => t.code.toLowerCase() == 'avatar')
             .firstOrNull;
@@ -521,8 +520,7 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
     try {
       String? nameTypeCode;
       try {
-        final updateTypes =
-            await ref.read(getRoomUpdateTypesUseCaseProvider)();
+        final updateTypes = await ref.read(getRoomUpdateTypesUseCaseProvider)();
         final nameType = updateTypes
             .where((t) => t.code.toLowerCase() == 'name')
             .firstOrNull;
@@ -633,83 +631,244 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
 
   void _showLeaveAndTransferAdminDialog(List<ChatMember> otherMembers) {
     String? selectedUserId = otherMembers.first.id;
+    final config = ref.read(chatUiConfigProvider);
+    final primary =
+        config.primaryActionColor ?? Theme.of(context).colorScheme.primary;
 
-    showDialog<void>(
+    showModalBottomSheet<void>(
       context: context,
-      builder: (dialogCtx) {
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Chọn trưởng nhóm mới'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Bạn đang là Admin. Vui lòng chọn thành viên tiếp quản quyền Admin trước khi rời nhóm:',
-                    style: TextStyle(fontSize: 14),
-                  ),
-                  const SizedBox(height: 12),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 240),
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (final member in otherMembers)
-                            ListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              leading: Icon(
-                                selectedUserId == member.id
-                                    ? Icons.radio_button_checked
-                                    : Icons.radio_button_off,
-                                color: selectedUserId == member.id
-                                    ? (ref
-                                            .read(chatUiConfigProvider)
-                                            .primaryActionColor ??
-                                        Theme.of(context).colorScheme.primary)
-                                    : Colors.grey,
-                              ),
-                              title: Text(member.displayName),
-                              subtitle: isNetworkAvatar(member.avatarUrl)
-                                  ? null
-                                  : (member.email != null &&
-                                          member.email!.isNotEmpty
-                                      ? Text(member.email!,
-                                          style: const TextStyle(fontSize: 12))
-                                      : null),
-                              onTap: () {
-                                setDialogState(() {
-                                  selectedUserId = member.id;
-                                });
-                              },
-                            ),
-                        ],
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade300,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(
+                            Icons.admin_panel_settings_rounded,
+                            color: primary,
+                            size: 24,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Chuyển quyền Owner',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              SizedBox(height: 2),
+                              Text(
+                                'Chọn 1 thành viên tiếp quản trước khi rời',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.of(context).size.height * 0.4,
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: otherMembers.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final member = otherMembers[index];
+                          final isSelected = selectedUserId == member.id;
+                          final hasAvatar = isNetworkAvatar(member.avatarUrl);
+                          final initial = member.displayName.isNotEmpty
+                              ? member.displayName[0].toUpperCase()
+                              : '?';
+
+                          return InkWell(
+                            onTap: () {
+                              setSheetState(() {
+                                selectedUserId = member.id;
+                              });
+                            },
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 12,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? primary.withValues(alpha: 0.08)
+                                    : Colors.grey.shade50,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? primary
+                                      : Colors.grey.shade200,
+                                  width: isSelected ? 1.5 : 1.0,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  CircleAvatar(
+                                    radius: 20,
+                                    backgroundColor: isSelected
+                                        ? primary.withValues(alpha: 0.2)
+                                        : Colors.grey.shade300,
+                                    backgroundImage: hasAvatar
+                                        ? NetworkImage(member.avatarUrl!)
+                                        : null,
+                                    child: !hasAvatar
+                                        ? Text(
+                                            initial,
+                                            style: TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.bold,
+                                              color: isSelected
+                                                  ? primary
+                                                  : Colors.black87,
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          member.displayName,
+                                          style: TextStyle(
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w600,
+                                            color: isSelected
+                                                ? primary
+                                                : Colors.black87,
+                                          ),
+                                        ),
+                                        if (member.email != null &&
+                                            member.email!.isNotEmpty) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            member.email!,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.grey.shade600,
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                  Icon(
+                                    isSelected
+                                        ? Icons.check_circle_rounded
+                                        : Icons.radio_button_off_rounded,
+                                    color: isSelected
+                                        ? primary
+                                        : Colors.grey.shade400,
+                                    size: 22,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              side: BorderSide(color: Colors.grey.shade300),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onPressed: () => Navigator.pop(sheetContext),
+                            child: Text(
+                              'Hủy',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          flex: 2,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.redAccent,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
+                              if (selectedUserId != null) {
+                                _leaveRoom(newAdminUserId: selectedUserId);
+                              }
+                            },
+                            child: const Text(
+                              'Chuyển quyền & Rời',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogCtx),
-                  child: const Text('Hủy'),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.redAccent,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () {
-                    Navigator.pop(dialogCtx);
-                    if (selectedUserId != null) {
-                      _leaveRoom(newAdminUserId: selectedUserId);
-                    }
-                  },
-                  child: const Text('Chuyển quyền & Rời'),
-                ),
-              ],
             );
           },
         );

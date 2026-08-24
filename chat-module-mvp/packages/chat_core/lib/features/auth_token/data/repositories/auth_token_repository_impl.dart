@@ -35,6 +35,7 @@ class AuthTokenRepositoryImpl implements AuthTokenRepository {
   @override
   Future<void> refresh(String roomId) async {
     _cached.remove(roomId);
+    _inFlight.remove(roomId);
     await getAccessToken(roomId);
   }
 
