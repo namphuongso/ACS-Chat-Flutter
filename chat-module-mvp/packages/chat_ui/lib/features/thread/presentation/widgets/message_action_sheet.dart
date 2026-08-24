@@ -59,7 +59,7 @@ class MessageActionSheet {
       builder: (dialogContext) {
         int hoveredReactionIndex = -1;
 
-        return StatefulBuilder(builder: (context, setOverlayState) {
+        return StatefulBuilder(builder: (overlayContext, setOverlayState) {
           Future<void> selectReaction(int index) async {
             if (index < 0 || index >= reactionConfigs.length) return;
             final selectedCode = reactionConfigs[index].code;

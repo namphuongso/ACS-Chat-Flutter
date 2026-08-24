@@ -9,6 +9,8 @@ class ChatMimeUtils {
     'jpg': 'image/jpeg',
     'jpeg': 'image/jpeg',
     'png': 'image/png',
+    'gif': 'image/gif',
+    'webp': 'image/webp',
     'heic': 'image/heic',
     'heif': 'image/heif',
     'pdf': 'application/pdf',

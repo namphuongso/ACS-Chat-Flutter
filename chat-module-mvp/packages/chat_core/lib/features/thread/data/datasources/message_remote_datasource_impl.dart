@@ -107,6 +107,7 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     ).replace(queryParameters: {
       'roomId': roomId,
       'pageSize': '50',
+      if (startTime != null && startTime.isNotEmpty) 'startTime': startTime,
       if (cursor != null && cursor.isNotEmpty) 'continuationToken': cursor,
     });
 
@@ -224,6 +225,7 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
   @override
   Future<bool> updateMessage({
     required String roomId,
+    String? threadId,
     required String messageId,
     required String content,
     Map<String, dynamic>? metadata,
@@ -231,11 +233,15 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     final appToken = await _appTokenProvider.getAppToken();
     final uri =
         Uri.parse('${_config.backendBaseUrl}${ChatApiEndpoints.updateMessage}');
+    final payloadMetadata = metadata ?? <String, dynamic>{};
     final requestBody = jsonEncode({
       'roomId': roomId,
+      'threadId': threadId,
       'messageId': messageId,
+      'id': messageId,
       'content': content,
-      'metaData': metadata ?? {},
+      'metaData': payloadMetadata,
+      'metadata': payloadMetadata,
     });
 
     ChatLogger.logRequest('POST (update message)', uri, body: {'roomId': roomId, 'messageId': messageId, 'content': content});
@@ -271,6 +277,7 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     final requestBody = jsonEncode({
       'roomId': roomId,
       'messageId': messageId,
+      'id': messageId,
     });
 
     ChatLogger.logRequest('POST (delete message)', uri, body: {'roomId': roomId, 'messageId': messageId});

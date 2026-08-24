@@ -85,8 +85,8 @@ class Message {
   /// `content` rỗng (tin chỉ có attachment cũng có thể rỗng).
   final DateTime? deletedOn;
 
-  /// Tin đã bị xoá trên ACS (có `deletedOn`). Không hiển thị nữa.
-  bool get isDeleted => deletedOn != null;
+  /// Tin đã bị xoá trên ACS (có `deletedOn` hoặc content placeholder).
+  bool get isDeleted => deletedOn != null || content == '(Tin nhắn đã bị xoá)';
 
   /// Metadata chứa thông tin hình ảnh, tệp, video, link, html...
   final Map<String, dynamic>? metadata;

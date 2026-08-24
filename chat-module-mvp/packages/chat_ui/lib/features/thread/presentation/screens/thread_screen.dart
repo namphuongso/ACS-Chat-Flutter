@@ -1348,7 +1348,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                                                     1 -
                                                     (index + 1)]);
 
-                                return MessageBubble(
+                                final defaultBubble = MessageBubble(
                                   key: ValueKey(message.id),
                                   message: message,
                                   isMe: isMe,
@@ -1366,6 +1366,9 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                                     canEdit: isMe,
                                   ),
                                 );
+                                return chatConfig.messageBubbleBuilder
+                                        ?.call(context, message, isMe, defaultBubble) ??
+                                    defaultBubble;
                               },
                             ),
                   if (_showScrollToBottomButton)
@@ -1476,12 +1479,17 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                 ),
               )
             else
-              MessageInput(
-                onSend: notifier.sendMessage,
-                onSendImages: notifier.sendImages,
-                onSendFiles: notifier.sendFiles,
-                onSendVideos: notifier.sendVideos,
-              ),
+              (() {
+                final defaultInput = MessageInput(
+                  onSend: notifier.sendMessage,
+                  onSendImages: notifier.sendImages,
+                  onSendFiles: notifier.sendFiles,
+                  onSendVideos: notifier.sendVideos,
+                );
+                return chatConfig.inputBuilder
+                        ?.call(context, notifier.sendMessage, defaultInput) ??
+                    defaultInput;
+              })(),
           ],
         ),
       ),

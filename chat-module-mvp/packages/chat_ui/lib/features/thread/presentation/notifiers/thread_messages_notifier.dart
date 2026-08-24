@@ -210,7 +210,23 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         }
         return;
       }
-      if (_messages.any((m) => m.id == message.id)) return;
+      final existingIndex = _messages.indexWhere((m) => m.id == message.id);
+      if (existingIndex != -1) {
+        final existing = _messages[existingIndex];
+        final updated = existing.copyWith(
+          content: message.content,
+          metadata: message.metadata ?? existing.metadata,
+          deletedOn: message.deletedOn ?? existing.deletedOn,
+          pin: message.pin,
+          status: message.status != MessageDeliveryStatus.sending
+              ? message.status
+              : existing.status,
+        );
+        final list = [..._messages];
+        list[existingIndex] = updated;
+        state = state.copyWith(messages: list);
+        return;
+      }
       // Echo của chính tin mình đang gửi dở (optimistic chưa có id thật từ
       // server): thay optimistic bằng tin thật thay vì thêm bản trùng →
       // tránh "lật/giật" do xuất hiện 2 tin giống nhau rồi cuộn lại.
@@ -1193,8 +1209,12 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         // "(tin nhắn đã bị xoá)" ngay, không cần chờ refresh lại lịch sử.
         state = state.copyWith(
           messages: _messages
-              .map((m) =>
-                  m.id == messageId ? m.copyWith(deletedOn: DateTime.now()) : m)
+              .map((m) => m.id == messageId
+                  ? m.copyWith(
+                      deletedOn: DateTime.now(),
+                      content: '(Tin nhắn đã bị xoá)',
+                    )
+                  : m)
               .toList(),
         );
         // Banner ghim có thể chứa tin vừa xoá → cập nhật lại.

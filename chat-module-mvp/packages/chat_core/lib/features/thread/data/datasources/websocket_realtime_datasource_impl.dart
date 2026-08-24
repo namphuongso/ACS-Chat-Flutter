@@ -252,6 +252,8 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
     }
     _lastVisibleMessageId = null;
     _activeRoomIds.clear();
+    _watchedRoomIds.clear();
+    _threadIdsByRoom.clear();
   }
 
   @override

@@ -47,6 +47,8 @@ class ContactListNotifier extends Notifier<ContactListState> {
   SearchContactsUseCase get _searchContactsUseCase =>
       ref.read(searchContactsUseCaseProvider);
 
+  int _searchRequestId = 0;
+
   @override
   ContactListState build() {
     ref.watch(searchContactsUseCaseProvider);
@@ -55,11 +57,7 @@ class ContactListNotifier extends Notifier<ContactListState> {
   }
 
   Future<void> loadContacts() async {
-    if (state.isLoading) return;
-
-    // Giữ keyword tại thời điểm bắt đầu — khi trả về mà keyword đã đổi (user
-    // gõ tiếp, debounce lại gọi search mới) thì bỏ kết quả cũ để không hiện
-    // danh sách sai với ô tìm kiếm.
+    final searchId = ++_searchRequestId;
     final requested = state.keyword;
     state = state.copyWith(
         isLoading: true, error: null, pageIndex: 1, hasMore: true);
@@ -70,7 +68,7 @@ class ContactListNotifier extends Notifier<ContactListState> {
         pageIndex: 1,
       );
 
-      if (!ref.mounted || state.keyword != requested) return;
+      if (!ref.mounted || _searchRequestId != searchId) return;
       state = state.copyWith(
         contacts: result.items,
         isLoading: false,
@@ -78,8 +76,12 @@ class ContactListNotifier extends Notifier<ContactListState> {
         pageIndex: 2,
       );
     } catch (e) {
-      if (!ref.mounted || state.keyword != requested) return;
+      if (!ref.mounted || _searchRequestId != searchId) return;
       state = state.copyWith(isLoading: false, error: e.toString());
+    } finally {
+      if (ref.mounted && _searchRequestId == searchId && state.isLoading) {
+        state = state.copyWith(isLoading: false);
+      }
     }
   }
 

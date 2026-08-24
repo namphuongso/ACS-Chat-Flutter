@@ -9,6 +9,7 @@ import '../../../../core/data/models/chat_member_model.dart';
 import '../../../../core/error/chat_api_exception.dart';
 import '../../../../core/network/json_api_client.dart';
 import '../../../../core/utils/chat_logger.dart';
+import '../../../../core/utils/mime_utils.dart';
 import '../../../auth_token/domain/repositories/chat_auth_token_provider.dart';
 import '../../domain/entities/room_update_type.dart';
 import '../models/conversation_model.dart';
@@ -319,7 +320,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
     final appToken = await _appTokenProvider.getAppToken();
     final file = File(filePath);
     final fileSize = await file.length();
-    final mimeType = contentType ?? _lookupMimeType(fileName);
+    final mimeType = contentType ?? ChatMimeUtils.lookupMimeType(fileName);
 
     final jsonHeaders = {
       'Authorization': 'Bearer $appToken',
@@ -472,27 +473,6 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
 
     final finalUrl = rawUrl.split('?').first;
     return finalUrl;
-  }
-
-  String _lookupMimeType(String fileName) {
-    final ext = fileName.split('.').last.toLowerCase();
-    switch (ext) {
-      case 'jpg':
-      case 'jpeg':
-        return 'image/jpeg';
-      case 'png':
-        return 'image/png';
-      case 'gif':
-        return 'image/gif';
-      case 'webp':
-        return 'image/webp';
-      case 'pdf':
-        return 'application/pdf';
-      case 'mp4':
-        return 'video/mp4';
-      default:
-        return 'application/octet-stream';
-    }
   }
 
   List<String> _extractUrls(dynamic value) {

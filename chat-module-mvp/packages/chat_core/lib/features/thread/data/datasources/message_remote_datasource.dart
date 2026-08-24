@@ -19,6 +19,7 @@ abstract class MessageRemoteDataSource {
   /// Sửa nội dung tin nhắn đã gửi — đi qua BE (`POST /chat/update-message`).
   Future<bool> updateMessage({
     required String roomId,
+    String? threadId,
     required String messageId,
     required String content,
     Map<String, dynamic>? metadata,

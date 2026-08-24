@@ -43,6 +43,7 @@ class _MockRemote implements MessageRemoteDataSource {
   @override
   Future<bool> updateMessage({
     required String roomId,
+    String? threadId,
     required String messageId,
     required String content,
     Map<String, dynamic>? metadata,
