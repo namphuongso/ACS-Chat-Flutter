@@ -33,6 +33,7 @@ class WebSocketEventDispatcher {
     // Only deduplicate actual text/media/system messages by ID.
     // Reaction and pin updates belong to target messages and must always be dispatched.
     final isControlOrSignalMessage =
+        message.isDeleted ||
         message.type == MessageType.reactionUpdate ||
         message.type == MessageType.messagePinUpdate ||
         message.type == MessageType.roomPinnedUpdate ||

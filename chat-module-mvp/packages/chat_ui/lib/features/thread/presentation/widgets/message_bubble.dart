@@ -215,7 +215,10 @@ class MessageBubble extends ConsumerWidget {
       clipBehavior: Clip.none,
       children: [
         bubbleContent,
-        if (summary != null && summary.totalReactions > 0 && badgeIcon != null)
+        if (summary != null &&
+            summary.totalReactions > 0 &&
+            badgeIcon != null &&
+            !message.isDeleted)
           Positioned(
             right: isMe ? 18 : 6,
             bottom: 3,

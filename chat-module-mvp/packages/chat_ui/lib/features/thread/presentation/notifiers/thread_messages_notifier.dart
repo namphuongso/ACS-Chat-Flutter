@@ -195,6 +195,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
           final updated = [..._messages];
           updated[i] = updated[i].copyWith(
             deletedOn: message.deletedOn ?? DateTime.now(),
+            content: '(Tin nhắn đã bị xoá)',
           );
           state = state.copyWith(messages: updated);
         } else {

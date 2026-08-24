@@ -31,9 +31,13 @@ class WebSocketEventParser {
     if (eventType == 'MessageDeleted') {
       final msgId = (data['messageId'] ?? data['MessageId'] ?? '').toString();
       if (msgId.isEmpty) return null;
-      final deletedAtRaw = data['deletedAtUtc']?.toString();
-      final deletedAt = deletedAtRaw != null
-          ? DateTime.tryParse(deletedAtRaw)
+      final deletedAtRaw = (data['deletedAtUtc'] ??
+              data['deletedAt'] ??
+              data['deletedOn'] ??
+              data['DeletedAtUtc'])
+          ?.toString();
+      final deletedAt = deletedAtRaw != null && deletedAtRaw.isNotEmpty
+          ? DateTime.tryParse(deletedAtRaw)?.toLocal()
           : DateTime.now();
       return MessageModel(
         id: msgId,
@@ -43,7 +47,7 @@ class WebSocketEventParser {
         content: '(Tin nhắn đã bị xoá)',
         type: MessageType.text,
         createdAt: deletedAt ?? DateTime.now(),
-        deletedOn: deletedAt,
+        deletedOn: deletedAt ?? DateTime.now(),
       );
     }
 
