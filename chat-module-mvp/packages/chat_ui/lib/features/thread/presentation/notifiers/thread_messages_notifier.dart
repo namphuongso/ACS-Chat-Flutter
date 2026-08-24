@@ -1096,8 +1096,17 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       if (urlMatch != null) {
         final linkUrl = urlMatch.group(0)!;
         try {
-          final previewData = await LinkPreviewFetcher.fetch(linkUrl);
+          final previewData = await LinkPreviewFetcher.fetch(linkUrl)
+              .timeout(const Duration(milliseconds: 1500));
           finalMetaData = previewData.toJson();
+          if (ref.mounted) {
+            final updatedMessages = _messages
+                .map((m) => m.id == optimisticId
+                    ? m.copyWith(metadata: finalMetaData)
+                    : m)
+                .toList();
+            state = state.copyWith(messages: updatedMessages);
+          }
         } catch (_) {}
       }
     }

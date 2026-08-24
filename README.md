@@ -1,26 +1,22 @@
 # ACS-Chat-Flutter
 
-Module Chat SDK được xây dựng trên nền tảng Flutter phục vụ tích hợp cho dự án **NPP-Mobile**. Dự án áp dụng Clean Architecture kết hợp với Riverpod để quản lý State, Azure Communication Services (ACS) SDK native cho kết nối Realtime, và Hive để lưu Cache dữ liệu offline.
+Module Chat SDK Flutter phục vụ tích hợp cho dự án NPP-Mobile. SDK áp dụng Clean Architecture, Riverpod quản lý State, WebSocket Backend cho kết nối Realtime và Hive lưu Cache dữ liệu offline.
 
----
+## Cài đặt & Tích hợp
 
-## 📦 Hướng dẫn Cài đặt & Tích hợp vào Dự án Host (NPP-Mobile)
-
-Để tích hợp Chat Module vào ứng dụng chính (`NPP-Mobile`), khai báo các package dưới dạng **Git Dependency** trong tệp `pubspec.yaml` của dự án Host:
+Khai báo các package dưới dạng Git Dependency trong tệp `pubspec.yaml` của dự án Host:
 
 ```yaml
 dependencies:
   flutter:
     sdk: flutter
 
-  # Chat Core (Domain, Data & Repositories)
   chat_core:
     git:
       url: git@github.com:namphuongso/ACS-Chat-Flutter.git
       path: chat-module-mvp/packages/chat_core
       ref: development
 
-  # Chat UI (Giao diện màn hình & Component Widgets)
   chat_ui:
     git:
       url: git@github.com:namphuongso/ACS-Chat-Flutter.git
@@ -28,13 +24,15 @@ dependencies:
       ref: development
 ```
 
-> 💡 **Mẹo**: Nếu sử dụng kết nối HTTPS thay vì SSH key, bạn có thể đổi URL thành `https://github.com/namphuongso/ACS-Chat-Flutter.git`. Tùy theo giai đoạn release, bạn có thể thay `ref: development` bằng `ref: main` hoặc `tag: v2.0.0`. Realtime sử dụng kết nối WebSocket thuần Dart nên không yêu cầu cài đặt thêm native SDK plugin.
+Lưu ý:
+- Có thể dùng URL HTTPS `https://github.com/namphuongso/ACS-Chat-Flutter.git` nếu không dùng SSH key.
+- Có thể thay `ref: development` bằng `ref: main` hoặc `tag: vX.Y.Z` tùy môi trường release.
+- Realtime sử dụng kết nối WebSocket thuần Dart nên không yêu cầu cài đặt native SDK plugin.
 
----
+## Khởi tạo & Setup
 
-## 🚀 Khởi tạo & Sử dụng nhanh trong App
+### 1. Khởi tạo Chat Core tại main.dart
 
-### 1. Khởi tạo Chat Module tại `main.dart`
 ```dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -43,8 +41,6 @@ import 'package:chat_ui/chat_ui.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Khởi tạo Chat Core & Storage Hive local cache
   await ChatCore.initialize();
 
   runApp(
@@ -55,11 +51,12 @@ void main() async {
 }
 ```
 
-### 2. Định nghĩa Cấu hình Giao diện & API (`ChatUiConfig`)
+### 2. Định nghĩa cấu hình ChatUiConfig
+
 ```dart
 final chatConfig = ChatUiConfig(
-  backendBaseUrl: 'https://namphuong-api-dev.azurewebsites.net',
-  apiKey: '8492f144615571ac043b943e58471ba3bc37d7a59d065b1e6ff2d0106c1a1dc2',
+  backendBaseUrl: 'https://api-domain.com',
+  apiKey: 'YOUR_API_KEY',
   roomBackgroundColor: const Color(0xFFF5F6F8),
   inputBarBackgroundColor: Colors.white,
   sentBubbleColor: const Color(0xFF007AFF),
@@ -67,7 +64,8 @@ final chatConfig = ChatUiConfig(
 );
 ```
 
-### 3. Điều hướng mở Màn hình Danh sách Chat (`ChatListPage`)
+### 3. Mở màn hình danh sách cuộc trò chuyện ChatListPage
+
 ```dart
 Navigator.of(context).push(
   MaterialPageRoute(
@@ -79,51 +77,47 @@ Navigator.of(context).push(
 );
 ```
 
----
+### 4. Mở trực tiếp một phòng chat cụ thể ThreadScreen
 
-## ✨ Các tính năng & Cập nhật mới (Phase 02)
+```dart
+Navigator.of(context).push(
+  MaterialPageRoute(
+    builder: (_) => ThreadScreen(
+      roomId: 'TARGET_ROOM_ID',
+      threadId: 'TARGET_THREAD_ID',
+      currentUserId: 'CURRENT_USER_ID',
+      config: chatConfig,
+    ),
+  ),
+);
+```
 
-### 1. Quản lý Phòng chat nhóm & Thông tin phòng (Group Chat & Room Management)
-- **Tạo nhóm & Xem thành viên**: Hỗ trợ tạo phòng chat nhiều người, xem danh sách thành viên chi tiết trong phòng chat.
-- **Đổi tên & Đổi Avatar nhóm**: Cho phép cập nhật tên phòng chat nhóm và tải ảnh đại diện nhóm mới (`avatarUrl`).
-- **Thao tác quản trị phòng**: Rời khỏi phòng chat nhóm, ghim (pin) và bỏ ghim (unpin) tin nhắn quan trọng trong phòng.
+### 5. Điều hướng từ Push Notification hoặc Deep Link
 
-### 2. Thả cảm xúc tin nhắn (Message Reactions)
-- **Cảm xúc đa dạng**: Thả / gỡ / thay đổi biểu tượng cảm xúc (Like, Love, Haha, Wow, Sad, Angry) tương thích đầy đủ API backend (`reactionId`, `reactionCode`).
-- **Hiển thị trực tiếp**: Cập nhật danh sách icon cảm xúc phản hồi ngay trên bong bóng tin nhắn (Message Bubble) theo thời gian thực.
+```dart
+final deepLinkData = ChatDeepLinkData.fromMap(notificationPayload);
+if (deepLinkData != null) {
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => ThreadScreen(
+        roomId: deepLinkData.roomId,
+        threadId: deepLinkData.threadId,
+        currentUserId: 'CURRENT_USER_ID',
+        config: chatConfig,
+      ),
+    ),
+  );
+}
+```
 
-### 3. Tải lên Media & Tài liệu qua Azure Blob SAS (SAS File & Media Upload)
-- **Upload nhiều tệp đồng thời**: Hỗ trợ chọn và tải lên nhiều hình ảnh cùng lúc hoặc các tệp tài liệu (PDF, Word, Excel, PowerPoint, ZIP, TXT) qua đường dẫn Azure Blob SAS token.
-- **Tiến trình tải lên Realtime**: Hiển thị phần trăm tiến trình upload chi tiết cho từng tệp (`MediaUploadProgress`) trên thanh thông báo `UploadProgressBanner`.
-- **Giao diện hiển thị đa dạng**:
-  - Render bộ ảnh dạng lưới mượt mà (Grid 1–4+ ảnh).
-  - Trình xem ảnh toàn màn hình (Full-screen Carousel Image Preview).
-  - Thẻ tài liệu đính kèm (Document File Card) với biểu tượng theo định dạng file, tên tệp và dung lượng thực tế (`KB / MB`).
+## Tính năng thư viện hỗ trợ
 
-### 4. Kết nối Realtime & Tự động khôi phục (Native Realtime & Heartbeat)
-- **Lắng nghe sự kiện tức thì**: Nhận tin nhắn mới, tin nhắn hệ thống (thành viên gia nhập, đổi tên nhóm) và cảm xúc thả tin nhắn theo thời gian thực.
-- **Heartbeat & Tự động Reconnect**: Tự động duy trì heartbeat định kỳ tới server và khôi phục kết nối WebSocket ngay khi có mạng trở lại.
-
-### 5. Format Log JSON (Pretty Print Logging)
-- **Theo dõi Request / Response**: Sử dụng `ChatLogger` định dạng JSON красивый (Pretty Print) cho toàn bộ API HTTP (Headers, Query, Body, Status code) và các event WebSocket thô, giúp lập trình viên kiểm thử dễ dàng.
-
----
-
-## 🛠️ Tổng quan tính năng Phase 01
-
-### 1. Quản lý Tin nhắn (Message Management)
-- **Cập nhật & Xóa tin nhắn**: Bổ sung `UpdateMessageUseCase` và `DeleteMessageUseCase` với giao diện chỉnh sửa/xóa trực tiếp trên tin nhắn của bản thân.
-- **Tương thích API**: Khai báo và tích hợp các endpoint REST API trong `chat_api_endpoints.dart`.
-
-### 2. Cấu hình Giao diện động (Dynamic UI Styling)
-- **ChatUiConfig**: Cấu hình linh hoạt màu sắc bong bóng chat, hình nền phòng chat, thanh nhập tin nhắn và màu sắc icon từ ứng dụng chính.
-- **Customizable Themes**: Cho phép ghi đè thông qua `chatUiConfigProvider` để đồng bộ hoàn toàn với thiết kế của Host App.
-
-### 3. Trải nghiệm người dùng (UX/UI Improvements)
-- **SearchField Debounce**: Widget tìm kiếm hỗ trợ debounce 350ms tối ưu số lượt gọi API.
-- **Skeleton Loading**: Hiệu ứng Shimmer Loading (`SkeletonBox`, `MessageListSkeleton`, `ConversationListSkeleton`) chuyển cảnh tự nhiên.
-- **Tùy chỉnh TabBar**: Thanh chuyển đổi giữa **Chat gần đây** và **Danh bạ** phẳng, mượt mà trong `ChatListPage`.
-
-### 4. Cache Offline & Tốc độ tải (Local Caching)
-- **HiveIdentityStore**: Cache danh tính người dùng (`myAcsUserId`) xuống Hive storage để hiển thị đúng vị trí bong bóng chat (isMe) kể cả khi chưa có mạng.
-- **Hive Local Datasource**: Cache dữ liệu cuộc hội thoại (`HiveConversationLocalDatasource`) và tin nhắn (`HiveMessageLocalDatasource`) xem offline.
+- Chat 1-1 và Chat nhóm (Direct Chat & Group Chat).
+- WebSocket Realtime với cơ chế tự động duy trì Heartbeat và Reconnect khi khôi phục kết nối mạng.
+- Quản lý phòng chat: tạo nhóm, xem thành viên, đổi tên nhóm, đổi avatar nhóm, ghim tin nhắn, chuyển quyền trưởng phòng, bổ nhiệm quản trị viên, rời phòng chat.
+- Gửi tin nhắn đa phương tiện qua Azure Blob SAS URL: hình ảnh (bộ lưới 1-4+ ảnh, carousel xem toàn màn hình), video, tệp tài liệu (PDF, Word, Excel, PowerPoint, ZIP, TXT) kèm tiến trình upload realtime.
+- Tự động hiển thị thẻ xem trước liên kết (Link Preview Card) khi gửi tin nhắn chứa đường dẫn URL.
+- Thả biểu tượng cảm xúc tin nhắn (Message Reactions: Like, Love, Haha, Wow, Sad, Angry).
+- Lưu trữ và truy xuất cache offline dữ liệu cuộc trò chuyện và tin nhắn với Hive Local Storage.
+- Tùy biến giao diện linh hoạt qua `ChatUiConfig` (màu bong bóng chat, màu nền phòng chat, thanh nhập liệu, theme icon).
+- Format log HTTP Request/Response và WebSocket event dạng JSON Pretty Print với `ChatLogger`.

@@ -31,3 +31,16 @@ class ChatApiException implements Exception {
   @override
   String toString() => 'ChatApiException($statusCode $code): $message';
 }
+
+/// Ngoại lệ dành cho trường hợp phản hồi API trả về dữ liệu rỗng, sai định dạng
+/// hoặc thiếu thông tin xử lý (không phải do lỗi HTTP status code 4xx/5xx).
+class ChatDataException extends ChatApiException {
+  ChatDataException({
+    required super.code,
+    required super.message,
+    super.statusCode = 422,
+  });
+
+  @override
+  String toString() => 'ChatDataException($code): $message';
+}

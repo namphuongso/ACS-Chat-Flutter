@@ -1,6 +1,5 @@
 import 'dart:io';
-import 'dart:ui' show instantiateImageCodec;
-
+import '../../../../core/utils/image_dimension_utils.dart';
 import 'package:chat_core/chat_core.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -75,18 +74,9 @@ class MessageMediaUploadService {
               .setItemProgress(_roomId, item.fileName, 1.0);
 
           final file = File(item.path);
-          int width = 0;
-          int height = 0;
-          try {
-            final bytes = await file.readAsBytes();
-            final codec = await instantiateImageCodec(bytes);
-            final frame = await codec.getNextFrame();
-            width = frame.image.width;
-            height = frame.image.height;
-          } catch (e) {
-            ChatLogger.warn(
-                'Failed to decode image dimensions for ${item.fileName}: $e');
-          }
+          final dimensions = await ImageDimensionUtils.getDimensions(file);
+          final width = dimensions.width;
+          final height = dimensions.height;
 
           final fileSize = file.existsSync() ? await file.length() : 0;
 

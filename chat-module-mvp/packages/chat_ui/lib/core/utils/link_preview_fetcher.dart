@@ -114,6 +114,9 @@ class LinkPreviewFetcher {
         domain: domain,
       );
 
+      if (_cache.length >= 100) {
+        _cache.remove(_cache.keys.first);
+      }
       _cache[cleanUrl] = result;
       return result;
     } catch (_) {

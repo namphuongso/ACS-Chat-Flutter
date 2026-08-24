@@ -44,8 +44,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
       },
     );
     if (data == null) {
-      throw ChatApiException(
-        statusCode: 200,
+      throw ChatDataException(
         code: 'CREATE_ROOM_NULL_DATA',
         message:
             'Không thể tạo phòng chat. Người dùng này có thể chưa được kích hoạt chat hoặc đồng bộ ACS.',
@@ -119,8 +118,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
       },
     );
     if (data == null) {
-      throw ChatApiException(
-        statusCode: 200,
+      throw ChatDataException(
         code: 'CREATE_ROOM_NULL_DATA',
         message: 'Không thể tạo phòng chat nhóm.',
       );
@@ -302,8 +300,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
     );
     final urls = _extractUrls(data);
     if (urls.isEmpty) {
-      throw ChatApiException(
-        statusCode: 200,
+      throw ChatDataException(
         code: 'UPLOAD_EMPTY_URL',
         message: 'Upload thành công nhưng không nhận được URL file. data=$data',
       );
@@ -377,8 +374,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
         fileName;
 
     if (sasUrl.isEmpty) {
-      throw ChatApiException(
-        statusCode: 200,
+      throw ChatDataException(
         code: 'SAS_URL_MISSING',
         message:
             'Không nhận được SAS URL từ session. Response=${sessionRes.body}',
@@ -468,8 +464,7 @@ class ConversationRemoteDataSourceImpl implements ConversationRemoteDataSource {
             _extractUrls(sessionData).firstOrNull);
 
     if (rawUrl == null || rawUrl.isEmpty) {
-      throw ChatApiException(
-        statusCode: 200,
+      throw ChatDataException(
         code: 'FINAL_FILE_URL_MISSING',
         message: 'Upload thành công nhưng không lấy được link file cuối cùng.',
       );
