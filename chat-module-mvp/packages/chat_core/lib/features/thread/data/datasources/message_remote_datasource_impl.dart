@@ -517,13 +517,22 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     return (json['data'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
-        .map((item) => ReactionConfig(
-              id: item['id']?.toString() ?? item['reactionId']?.toString(),
-              code: item['reactionCode']?.toString() ?? item['code']?.toString() ?? '',
-              displayName: item['displayName']?.toString() ?? '',
-              iconUrl: item['iconUrl']?.toString() ?? '',
-            ))
-        .where((item) => item.code.isNotEmpty)
+        .map((item) {
+          final idStr = item['id']?.toString() ?? item['reactionId']?.toString();
+          final codeStr = item['reactionCode']?.toString() ??
+              item['code']?.toString() ??
+              idStr ??
+              '';
+          return ReactionConfig(
+            id: idStr,
+            code: codeStr,
+            displayName:
+                item['displayName']?.toString() ?? item['name']?.toString() ?? '',
+            iconUrl: item['iconUrl']?.toString() ?? item['url']?.toString() ?? '',
+          );
+        })
+        .where((item) =>
+            item.code.isNotEmpty || (item.id != null && item.id!.isNotEmpty))
         .toList();
   }
 

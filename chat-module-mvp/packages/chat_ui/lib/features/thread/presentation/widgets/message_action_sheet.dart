@@ -62,8 +62,14 @@ class MessageActionSheet {
         return StatefulBuilder(builder: (overlayContext, setOverlayState) {
           Future<void> selectReaction(int index) async {
             if (index < 0 || index >= reactionConfigs.length) return;
-            final targetCode = reactionConfigs[index].code;
-            final codeToSend = (myReactionCode == targetCode) ? '' : targetCode;
+            final target = reactionConfigs[index];
+            final reactionVal = (target.id != null && target.id!.isNotEmpty)
+                ? target.id!
+                : target.code;
+            final isAlreadySelected = myReactionCode == reactionVal ||
+                myReactionCode == target.code ||
+                myReactionCode == target.id;
+            final codeToSend = isAlreadySelected ? '' : reactionVal;
             Navigator.pop(dialogContext);
             bool ok = false;
             try {
