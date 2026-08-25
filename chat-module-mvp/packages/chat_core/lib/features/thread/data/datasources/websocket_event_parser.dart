@@ -44,9 +44,17 @@ class WebSocketEventParser {
         threadId: targetId,
         senderId: (data['deletedBy'] ?? '').toString(),
         senderDisplayName: '',
-        content: '(Tin nhắn đã bị xoá)',
+        content: '',
         type: MessageType.text,
-        createdAt: deletedAt ?? DateTime.now(),
+        createdAt: DateTime.tryParse(
+              (data['createdDate'] ??
+                      data['createdOn'] ??
+                      data['CreatedDate'] ??
+                      '')
+                  .toString(),
+            )?.toLocal() ??
+            deletedAt ??
+            DateTime.now(),
         deletedOn: deletedAt ?? DateTime.now(),
       );
     }

@@ -57,6 +57,7 @@ void main() {
         'payload': {
           'messageId': 'msg_999',
           'deletedBy': 'user_111',
+          'createdDate': '2026-08-11T04:38:07Z',
         },
       };
 
@@ -65,7 +66,11 @@ void main() {
       expect(message, isNotNull);
       expect(message!.id, equals('msg_999'));
       expect(message.deletedOn, isNotNull);
-      expect(message.content, equals('(Tin nhắn đã bị xoá)'));
+      expect(
+        message.createdAt.toUtc(),
+        equals(DateTime.utc(2026, 8, 11, 4, 38, 7)),
+      );
+      expect(message.displayContent, equals(Message.deletedContentPlaceholder));
     });
 
     test('parses RoomUpdated event correctly', () {

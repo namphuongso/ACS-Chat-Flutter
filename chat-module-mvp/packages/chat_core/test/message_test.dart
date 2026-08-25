@@ -22,6 +22,37 @@ void main() {
       expect(updated.id, original.id);
     });
 
+    test('không coi nội dung giống placeholder là tin nhắn đã xoá', () {
+      final message = Message(
+        id: 'm1',
+        threadId: 't1',
+        senderId: 'u1',
+        senderDisplayName: 'A',
+        content: Message.deletedContentPlaceholder,
+        type: MessageType.text,
+        createdAt: DateTime(2026, 1, 1),
+      );
+
+      expect(message.isDeleted, isFalse);
+      expect(message.displayContent, Message.deletedContentPlaceholder);
+    });
+
+    test('tin nhắn có deletedOn hiển thị placeholder', () {
+      final message = Message(
+        id: 'm1',
+        threadId: 't1',
+        senderId: 'u1',
+        senderDisplayName: 'A',
+        content: 'Nội dung cũ',
+        type: MessageType.text,
+        createdAt: DateTime(2026, 1, 1),
+        deletedOn: DateTime(2026, 1, 2),
+      );
+
+      expect(message.isDeleted, isTrue);
+      expect(message.displayContent, Message.deletedContentPlaceholder);
+    });
+
     test('hai message cùng id được coi là bằng nhau', () {
       final a = Message(
         id: 'm1',

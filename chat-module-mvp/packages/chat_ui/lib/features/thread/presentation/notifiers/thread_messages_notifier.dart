@@ -195,7 +195,6 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
           final updated = [..._messages];
           updated[i] = updated[i].copyWith(
             deletedOn: message.deletedOn ?? DateTime.now(),
-            content: '(Tin nhắn đã bị xoá)',
           );
           state = state.copyWith(messages: updated);
         } else {
@@ -236,7 +235,8 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
               m.status == MessageDeliveryStatus.sending &&
               ((m.metadata?['clientMsgId'] != null &&
                       message.metadata?['clientMsgId'] != null)
-                  ? m.metadata!['clientMsgId'] == message.metadata!['clientMsgId']
+                  ? m.metadata!['clientMsgId'] ==
+                      message.metadata!['clientMsgId']
                   : m.content == message.content))
           .firstOrNull;
       if (pending != null) {
@@ -577,8 +577,13 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         payload['isAvatarChanged'] = true;
         metadata['isAvatarChanged'] = true;
       } else {
-        final newRoomName = (metadata['roomName'] ?? payload['roomName'] ?? '').toString().trim();
-        final newAvatarUrl = (metadata['avatarUrl'] ?? payload['avatarUrl'] ?? '').toString().trim();
+        final newRoomName = (metadata['roomName'] ?? payload['roomName'] ?? '')
+            .toString()
+            .trim();
+        final newAvatarUrl =
+            (metadata['avatarUrl'] ?? payload['avatarUrl'] ?? '')
+                .toString()
+                .trim();
 
         final conversations = ref.read(conversationListProvider);
         final currentConversation = conversations
@@ -590,8 +595,8 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         final isNameChanged = newRoomName.isNotEmpty &&
             currentRoomName.isNotEmpty &&
             newRoomName != currentRoomName;
-        final isAvatarChanged = newAvatarUrl.isNotEmpty &&
-            newAvatarUrl != currentAvatarUrl;
+        final isAvatarChanged =
+            newAvatarUrl.isNotEmpty && newAvatarUrl != currentAvatarUrl;
 
         if (isNameChanged) {
           payload['isNameChanged'] = true;
@@ -791,8 +796,10 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
         if (m.type == MessageType.system) {
           final isAlreadyInRemote = remoteItems.any((rm) {
             if (rm.type != MessageType.system) return false;
-            final enrichedRm = rm.metadata != null ? _enrichSystemMessageContent(rm) : rm;
-            final sameContent = enrichedRm.content == m.content || rm.content == m.content;
+            final enrichedRm =
+                rm.metadata != null ? _enrichSystemMessageContent(rm) : rm;
+            final sameContent =
+                enrichedRm.content == m.content || rm.content == m.content;
             final sameMetadataId = rm.metadata?['id'] != null &&
                 m.metadata?['id'] != null &&
                 rm.metadata?['id'] == m.metadata?['id'];
@@ -1206,14 +1213,13 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       );
       if (!ref.mounted) return false;
       if (ok) {
-        // Không ẩn hẳn — đánh dấu deletedOn để UI hiện placeholder
-        // "(tin nhắn đã bị xoá)" ngay, không cần chờ refresh lại lịch sử.
+        // Không ẩn hẳn — đánh dấu deletedOn để UI hiện placeholder ngay,
+        // không cần chờ refresh lại lịch sử.
         state = state.copyWith(
           messages: _messages
               .map((m) => m.id == messageId
                   ? m.copyWith(
                       deletedOn: DateTime.now(),
-                      content: '(Tin nhắn đã bị xoá)',
                     )
                   : m)
               .toList(),

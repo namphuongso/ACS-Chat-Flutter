@@ -56,6 +56,8 @@ class MessageType {
 enum MessageDeliveryStatus { sending, sent, failed }
 
 class Message {
+  static const String deletedContentPlaceholder = 'Tin nhắn đã bị xoá';
+
   const Message({
     required this.id,
     required this.threadId,
@@ -85,8 +87,12 @@ class Message {
   /// `content` rỗng (tin chỉ có attachment cũng có thể rỗng).
   final DateTime? deletedOn;
 
-  /// Tin đã bị xoá trên ACS (có `deletedOn` hoặc content placeholder).
-  bool get isDeleted => deletedOn != null || content == '(Tin nhắn đã bị xoá)';
+  /// Tin đã bị xoá trên ACS. Chỉ dùng `deletedOn` để tránh false-positive
+  /// với tin nhắn hợp lệ có nội dung giống placeholder.
+  bool get isDeleted => deletedOn != null;
+
+  /// Nội dung hiển thị cho bubble chat.
+  String get displayContent => isDeleted ? deletedContentPlaceholder : content;
 
   /// Metadata chứa thông tin hình ảnh, tệp, video, link, html...
   final Map<String, dynamic>? metadata;

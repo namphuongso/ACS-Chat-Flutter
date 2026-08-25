@@ -48,7 +48,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     final uri =
         Uri.parse('${_config.backendBaseUrl}${ChatApiEndpoints.sendMessage}');
     final payloadMetadata = metadata ?? <String, dynamic>{};
-    final requestContent = content.trim().isEmpty ? '[Hình ảnh]' : content.trim();
+    final requestContent =
+        content.trim().isEmpty ? '[Hình ảnh]' : content.trim();
     final requestBody = jsonEncode({
       'roomId': roomId,
       'content': requestContent,
@@ -57,7 +58,11 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     });
 
     final requestHeaders = _headers(appToken);
-    ChatLogger.logRequest('POST', uri, headers: requestHeaders, body: {'roomId': roomId, 'content': requestContent, 'metadata': payloadMetadata});
+    ChatLogger.logRequest('POST', uri, headers: requestHeaders, body: {
+      'roomId': roomId,
+      'content': requestContent,
+      'metadata': payloadMetadata
+    });
 
     final response = await _http
         .post(
@@ -131,10 +136,11 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
 
     final json = jsonDecode(response.body) as Map<String, dynamic>;
     final data = json['data'] as Map<String, dynamic>? ?? const {};
-    final rawItems = (data['items'] as List? ?? data['messages'] as List? ?? const [])
-        .whereType<Map<String, dynamic>>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
+    final rawItems =
+        (data['items'] as List? ?? data['messages'] as List? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
 
     Map<String, dynamic>? nextPayload;
     for (var i = rawItems.length - 1; i >= 0; i--) {
@@ -169,10 +175,13 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         } else if (tokens.contains('avatar') || updateType == 'avatar') {
           payload['isAvatarChanged'] = true;
         } else if (nextPayload != null) {
-          final roomName =
-              (payload['roomName'] ?? itemData['roomName'] ?? '').toString().trim();
+          final roomName = (payload['roomName'] ?? itemData['roomName'] ?? '')
+              .toString()
+              .trim();
           final avatarUrl =
-              (payload['avatarUrl'] ?? itemData['avatarUrl'] ?? '').toString().trim();
+              (payload['avatarUrl'] ?? itemData['avatarUrl'] ?? '')
+                  .toString()
+                  .trim();
           final nextRoomName =
               (nextPayload['roomName'] ?? '').toString().trim();
           final nextAvatarUrl =
@@ -186,10 +195,13 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
           if (nameChanged) payload['isNameChanged'] = true;
           if (avatarChanged) payload['isAvatarChanged'] = true;
         } else {
-          final roomName =
-              (payload['roomName'] ?? itemData['roomName'] ?? '').toString().trim();
+          final roomName = (payload['roomName'] ?? itemData['roomName'] ?? '')
+              .toString()
+              .trim();
           final avatarUrl =
-              (payload['avatarUrl'] ?? itemData['avatarUrl'] ?? '').toString().trim();
+              (payload['avatarUrl'] ?? itemData['avatarUrl'] ?? '')
+                  .toString()
+                  .trim();
           if (roomName.isNotEmpty && avatarUrl.isEmpty) {
             payload['isNameChanged'] = true;
           } else if (avatarUrl.isNotEmpty && roomName.isEmpty) {
@@ -244,7 +256,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       'metadata': payloadMetadata,
     });
 
-    ChatLogger.logRequest('POST (update message)', uri, body: {'roomId': roomId, 'messageId': messageId, 'content': content});
+    ChatLogger.logRequest('POST (update message)', uri,
+        body: {'roomId': roomId, 'messageId': messageId, 'content': content});
 
     final response = await _http
         .post(
@@ -254,7 +267,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         )
         .timeout(const Duration(seconds: 15));
 
-    ChatLogger.logResponse('POST (update message)', uri, response.statusCode, response.body);
+    ChatLogger.logResponse(
+        'POST (update message)', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw ChatApiException(
@@ -263,7 +277,16 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         message: response.body,
       );
     }
-    return true;
+    return _parseOperationResult(response.body);
+  }
+
+  bool _parseOperationResult(String body) {
+    final decoded = jsonDecode(body);
+    if (decoded is Map) {
+      return decoded['data'] == true;
+    }
+    if (decoded is bool) return decoded;
+    return false;
   }
 
   @override
@@ -280,7 +303,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       'id': messageId,
     });
 
-    ChatLogger.logRequest('POST (delete message)', uri, body: {'roomId': roomId, 'messageId': messageId});
+    ChatLogger.logRequest('POST (delete message)', uri,
+        body: {'roomId': roomId, 'messageId': messageId});
 
     final response = await _http
         .post(
@@ -290,7 +314,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
         )
         .timeout(const Duration(seconds: 15));
 
-    ChatLogger.logResponse('POST (delete message)', uri, response.statusCode, response.body);
+    ChatLogger.logResponse(
+        'POST (delete message)', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw ChatApiException(
@@ -313,12 +338,15 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
 
     ChatLogger.logRequest('POST (pin message)', uri);
 
-    final response = await _http.post(
-      uri,
-      headers: _headers(appToken),
-    ).timeout(const Duration(seconds: 15));
+    final response = await _http
+        .post(
+          uri,
+          headers: _headers(appToken),
+        )
+        .timeout(const Duration(seconds: 15));
 
-    ChatLogger.logResponse('POST (pin message)', uri, response.statusCode, response.body);
+    ChatLogger.logResponse(
+        'POST (pin message)', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200 && response.statusCode != 201) {
       throw ChatApiException(
@@ -340,12 +368,15 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
 
     ChatLogger.logRequest('GET (pinned messages)', uri);
 
-    final response = await _http.get(
-      uri,
-      headers: _headers(appToken),
-    ).timeout(const Duration(seconds: 15));
+    final response = await _http
+        .get(
+          uri,
+          headers: _headers(appToken),
+        )
+        .timeout(const Duration(seconds: 15));
 
-    ChatLogger.logResponse('GET (pinned messages)', uri, response.statusCode, response.body);
+    ChatLogger.logResponse(
+        'GET (pinned messages)', uri, response.statusCode, response.body);
 
     if (response.statusCode != 200) {
       throw ChatApiException(
@@ -500,11 +531,14 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     final appToken = await _appTokenProvider.getAppToken();
     final uri = Uri.parse(
       '${_config.backendBaseUrl}${ChatApiEndpoints.getReactionConfigs}',
-    ).replace(queryParameters: {'pageIndex': '$pageIndex', 'pageSize': '$pageSize'});
-    final response = await _http.get(
-      uri,
-      headers: _headers(appToken),
-    ).timeout(const Duration(seconds: 15));
+    ).replace(
+        queryParameters: {'pageIndex': '$pageIndex', 'pageSize': '$pageSize'});
+    final response = await _http
+        .get(
+          uri,
+          headers: _headers(appToken),
+        )
+        .timeout(const Duration(seconds: 15));
     ChatLogger.logResponse(
         'GET (reaction configs)', uri, response.statusCode, response.body);
     if (response.statusCode != 200) {
@@ -518,7 +552,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     return (json['data'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
         .map((item) {
-          final idStr = item['id']?.toString() ?? item['reactionId']?.toString();
+          final idStr =
+              item['id']?.toString() ?? item['reactionId']?.toString();
           final codeStr = item['reactionCode']?.toString() ??
               item['code']?.toString() ??
               idStr ??
@@ -526,9 +561,11 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
           return ReactionConfig(
             id: idStr,
             code: codeStr,
-            displayName:
-                item['displayName']?.toString() ?? item['name']?.toString() ?? '',
-            iconUrl: item['iconUrl']?.toString() ?? item['url']?.toString() ?? '',
+            displayName: item['displayName']?.toString() ??
+                item['name']?.toString() ??
+                '',
+            iconUrl:
+                item['iconUrl']?.toString() ?? item['url']?.toString() ?? '',
           );
         })
         .where((item) =>
@@ -552,10 +589,12 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
       'pageIndex': '$pageIndex',
       'pageSize': '$pageSize',
     });
-    final response = await _http.get(
-      uri,
-      headers: _headers(appToken),
-    ).timeout(const Duration(seconds: 15));
+    final response = await _http
+        .get(
+          uri,
+          headers: _headers(appToken),
+        )
+        .timeout(const Duration(seconds: 15));
     ChatLogger.logResponse(
         'GET (message reactions)', uri, response.statusCode, response.body);
     if (response.statusCode != 200) {
@@ -590,11 +629,14 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     final appToken = await _appTokenProvider.getAppToken();
     final uri = Uri.parse(
       '${_config.backendBaseUrl}${ChatApiEndpoints.getRoomReactions(roomId)}',
-    ).replace(queryParameters: {'pageIndex': '$pageIndex', 'pageSize': '$pageSize'});
-    final response = await _http.get(
-      uri,
-      headers: _headers(appToken),
-    ).timeout(const Duration(seconds: 15));
+    ).replace(
+        queryParameters: {'pageIndex': '$pageIndex', 'pageSize': '$pageSize'});
+    final response = await _http
+        .get(
+          uri,
+          headers: _headers(appToken),
+        )
+        .timeout(const Duration(seconds: 15));
     ChatLogger.logResponse(
         'GET (room reactions)', uri, response.statusCode, response.body);
     if (response.statusCode != 200) {
@@ -640,7 +682,8 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     ]);
     if (mine != null && mine.isNotEmpty) return mine;
 
-    final others = item['otherReaction'] ?? item['otherReactions'] ?? item['others'];
+    final others =
+        item['otherReaction'] ?? item['otherReactions'] ?? item['others'];
     if (others is List) {
       for (final raw in others.whereType<Map>()) {
         final map = raw.cast<dynamic, dynamic>();
@@ -682,13 +725,16 @@ class MessageRemoteDataSourceImpl implements MessageRemoteDataSource {
     }
     final headers = _headers(appToken);
     final body = jsonEncode(payload);
-    ChatLogger.logRequest('POST (reaction message)', uri, headers: headers, body: body);
+    ChatLogger.logRequest('POST (reaction message)', uri,
+        headers: headers, body: body);
 
-    final response = await _http.post(
-      uri,
-      headers: headers,
-      body: body,
-    ).timeout(const Duration(seconds: 15));
+    final response = await _http
+        .post(
+          uri,
+          headers: headers,
+          body: body,
+        )
+        .timeout(const Duration(seconds: 15));
     ChatLogger.logResponse(
         'POST (reaction message)', uri, response.statusCode, response.body);
     if (response.statusCode != 200 && response.statusCode != 201) {

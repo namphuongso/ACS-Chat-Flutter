@@ -95,9 +95,9 @@ class MessageBubble extends ConsumerWidget {
         : (int.tryParse(fileSizeRaw?.toString() ?? '') ?? 0);
     final isOver100MB = sizeBytes > 100 * 1024 * 1024;
 
-    final isMediaMetadata = (mediaType == 'image' ||
-        mediaType == 'video' ||
-        hasImages) && !isOver100MB;
+    final isMediaMetadata =
+        (mediaType == 'image' || mediaType == 'video' || hasImages) &&
+            !isOver100MB;
 
     final rawContent = message.content.trim();
     final isFallbackMediaText = rawContent == '[Hình ảnh]' ||
@@ -166,7 +166,7 @@ class MessageBubble extends ConsumerWidget {
             ],
             if (message.isDeleted)
               Text(
-                '(Tin nhắn đã bị xoá)',
+                Message.deletedContentPlaceholder,
                 style: TextStyle(
                   color: textColor.withValues(alpha: 0.85),
                   fontStyle: FontStyle.italic,
