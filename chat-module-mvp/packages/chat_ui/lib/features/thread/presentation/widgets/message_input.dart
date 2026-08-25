@@ -1,17 +1,14 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:chat_core/chat_core.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:photo_manager/photo_manager.dart';
 
 import '../../../../core/chat_ui_config.dart';
 import '../../../../core/widgets/chat_dialogs.dart';
 import 'attachment_action.dart';
-import 'asset_thumb_tile.dart';
 
 class MessageInput extends ConsumerStatefulWidget {
   const MessageInput({
@@ -34,47 +31,24 @@ class MessageInput extends ConsumerStatefulWidget {
   ConsumerState<MessageInput> createState() => _MessageInputState();
 }
 
-class _MessageInputState extends ConsumerState<MessageInput>
-    with WidgetsBindingObserver {
+class _MessageInputState extends ConsumerState<MessageInput> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   bool _showAttachmentPanel = false;
 
-  // Trạng thái gallery ảnh inline (hiện ngay dưới khung nhập liệu).
-  bool _showGallery = false;
-  bool _galleryLoading = false;
-  bool _galleryPermissionDenied = false;
-  List<AssetEntity> _galleryAssets = [];
-  final Set<String> _selectedAssetIds = {};
-  bool _resolvingSelection = false;
-
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _controller.addListener(_onTextChanged);
     _focusNode.addListener(_onFocusChanged);
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Người dùng có thể vừa cấp quyền trong Settings rồi quay lại —
-    // tự kiểm tra lại để gallery hiện ảnh luôn, không cần bấm "Thử lại".
-    if (state == AppLifecycleState.resumed &&
-        _galleryPermissionDenied &&
-        _showGallery) {
-      setState(() => _galleryLoading = true);
-      _loadGalleryAssets();
-    }
   }
 
   void _onTextChanged() => setState(() {});
 
   void _onFocusChanged() {
     setState(() {
-      if (_focusNode.hasFocus && (_showAttachmentPanel || _showGallery)) {
+      if (_focusNode.hasFocus && _showAttachmentPanel) {
         _showAttachmentPanel = false;
-        _showGallery = false;
       }
     });
   }
@@ -94,7 +68,6 @@ class _MessageInputState extends ConsumerState<MessageInput>
     _focusNode.unfocus();
     setState(() {
       _showAttachmentPanel = !_showAttachmentPanel;
-      _showGallery = false;
     });
   }
 
@@ -195,7 +168,6 @@ class _MessageInputState extends ConsumerState<MessageInput>
     _focusNode.unfocus();
     setState(() {
       _showAttachmentPanel = false;
-      _showGallery = false;
     });
     try {
       final picker = ImagePicker();
@@ -232,18 +204,38 @@ class _MessageInputState extends ConsumerState<MessageInput>
     _focusNode.unfocus();
     setState(() {
       _showAttachmentPanel = false;
-      _showGallery = false;
     });
-    final result = await FilePicker.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['jpg', 'jpeg', 'png', 'heic', 'heif'],
-      allowMultiple: true,
-    );
-    if (result == null || result.files.isEmpty || !mounted) return;
-    final validFiles = await _resolvePickedFiles(result.files);
-    if (!mounted) return;
-    if (validFiles.isNotEmpty) {
-      await _processAndSendImages(validFiles);
+    try {
+      final picker = ImagePicker();
+      final photos = await picker.pickMultiImage(
+        imageQuality: 85,
+      );
+      if (photos.isEmpty || !mounted) return;
+      final platformFiles = <PlatformFile>[];
+      for (final photo in photos) {
+        platformFiles.add(
+          PlatformFile(
+            path: photo.path,
+            name: photo.name.isNotEmpty
+                ? photo.name
+                : 'image_${DateTime.now().millisecondsSinceEpoch}.jpg',
+            size: await photo.length(),
+          ),
+        );
+      }
+      final validFiles = await _resolvePickedFiles(platformFiles);
+      if (!mounted) return;
+      if (validFiles.isNotEmpty) {
+        await _processAndSendImages(validFiles);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      showChatToast(
+        context,
+        message: 'Không thể mở thư viện hoặc chưa được cấp quyền.',
+        isError: true,
+        config: ref.read(chatUiConfigProvider),
+      );
     }
   }
 
@@ -251,7 +243,6 @@ class _MessageInputState extends ConsumerState<MessageInput>
     _focusNode.unfocus();
     setState(() {
       _showAttachmentPanel = false;
-      _showGallery = false;
     });
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
@@ -281,382 +272,8 @@ class _MessageInputState extends ConsumerState<MessageInput>
     }
   }
 
-  // ===== Gallery ảnh inline =====
-
-  Future<void> _openGallery() async {
-    _focusNode.unfocus();
-    if (_showGallery) {
-      setState(() => _showGallery = false);
-      return;
-    }
-    setState(() {
-      _showAttachmentPanel = false;
-      _showGallery = true;
-      _galleryLoading = true;
-      _galleryPermissionDenied = false;
-    });
-    await _loadGalleryAssets();
-  }
-
-  Future<void> _loadGalleryAssets() async {
-    try {
-      final permissionState = await PhotoManager.requestPermissionExtend();
-      if (!mounted) return;
-      final hasAccess = permissionState == PermissionState.authorized ||
-          permissionState == PermissionState.limited;
-      if (!hasAccess) {
-        setState(() {
-          _galleryLoading = false;
-          _galleryPermissionDenied = true;
-        });
-        return;
-      }
-      final albums = await PhotoManager.getAssetPathList(
-        type: RequestType.common,
-        onlyAll: true,
-      );
-      final album = albums.firstOrNull;
-      final assets = album == null
-          ? <AssetEntity>[]
-          : await album.getAssetListRange(start: 0, end: 100);
-      if (!mounted) return;
-      setState(() {
-        _galleryAssets = assets
-            .where(
-                (a) => a.type == AssetType.image || a.type == AssetType.video)
-            .toList();
-        _galleryLoading = false;
-        _galleryPermissionDenied = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _galleryLoading = false;
-        _galleryPermissionDenied = true;
-      });
-    }
-  }
-
-  void _toggleAssetSelection(AssetEntity asset) {
-    setState(() {
-      if (_selectedAssetIds.contains(asset.id)) {
-        _selectedAssetIds.remove(asset.id);
-      } else {
-        _selectedAssetIds.add(asset.id);
-      }
-    });
-  }
-
-  Future<void> _sendSelectedAssets() async {
-    if (_selectedAssetIds.isEmpty || _resolvingSelection) return;
-    setState(() => _resolvingSelection = true);
-    final selected =
-        _galleryAssets.where((a) => _selectedAssetIds.contains(a.id)).toList();
-
-    final picked = <({String path, String fileName})>[];
-    var failedCount = 0;
-    for (final asset in selected) {
-      try {
-        final isVideo = asset.type == AssetType.video;
-        var fileName = asset.title;
-        if (fileName == null || fileName.isEmpty || !fileName.contains('.')) {
-          try {
-            final asyncTitle = await asset.titleAsync;
-            if (asyncTitle.isNotEmpty && asyncTitle.contains('.')) {
-              fileName = asyncTitle;
-            }
-          } catch (_) {
-            // Giữ fallback bên dưới.
-          }
-        }
-        fileName ??=
-            'media_${DateTime.now().millisecondsSinceEpoch}_${picked.length}${isVideo ? '.mp4' : '.jpg'}';
-
-        final lowerName = fileName.toLowerCase();
-        final isHeic = !isVideo &&
-            (lowerName.endsWith('.heic') || lowerName.endsWith('.heif'));
-
-        File? file;
-        if (isHeic) {
-          // BE không nhận HEIC ("File extension is not supported") —
-          // chuyển sang JPEG đúng độ phân giải gốc bằng engine thumbnail
-          // của platform (iOS PhotoKit / Android) rồi mới upload.
-          file = await _convertHeicToJpeg(asset, fileName);
-          if (file != null) {
-            fileName =
-                fileName.substring(0, fileName.lastIndexOf('.')) + '.jpg';
-          } else {
-            ChatLogger.warn(
-              'HEIC convert failed for $fileName — gửi file gốc (BE có thể từ chối)',
-            );
-          }
-        }
-        file ??= await asset.file;
-
-        if (file == null) {
-          failedCount++;
-          continue;
-        }
-        picked.add((path: file.path, fileName: fileName));
-      } catch (_) {
-        failedCount++;
-      }
-    }
-
-    if (!mounted) return;
-    const videoExts = {'mp4', 'mov', 'm4v', 'avi', 'mkv', '3gp', 'webm'};
-    final pickedVideos = picked
-        .where(
-            (f) => videoExts.contains(f.fileName.split('.').last.toLowerCase()))
-        .toList();
-    final videoPaths = pickedVideos.map((f) => f.path).toSet();
-    final pickedImages =
-        picked.where((f) => !videoPaths.contains(f.path)).toList();
-
-    setState(() {
-      _resolvingSelection = false;
-      _selectedAssetIds.clear();
-      if (picked.isNotEmpty) _showGallery = false;
-    });
-    if (pickedImages.isNotEmpty) {
-      await _processAndSendImages(pickedImages);
-    }
-    if (pickedVideos.isNotEmpty) {
-      widget.onSendVideos?.call(pickedVideos);
-    }
-    if (failedCount > 0) {
-      showChatToast(
-        context,
-        message: failedCount == selected.length
-            ? 'Không thể đọc $failedCount ảnh/video đã chọn'
-            : '$failedCount/${selected.length} ảnh/video không đọc được',
-        isError: true,
-        config: ref.read(chatUiConfigProvider),
-      );
-    }
-  }
-
-  Widget _buildGalleryPanel(ChatUiConfig config) {
-    final primary =
-        config.primaryActionColor ?? Theme.of(context).colorScheme.primary;
-    return Container(
-      height: 320,
-      color: config.surfaceColor ?? Colors.white,
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 4, 6, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    _galleryPermissionDenied
-                        ? 'Cần quyền truy cập thư viện ảnh'
-                        : 'Ảnh & video trên thiết bị',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                if (_resolvingSelection)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 8),
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  ),
-                if (_selectedAssetIds.isNotEmpty && !_resolvingSelection)
-                  TextButton(
-                    onPressed: _sendSelectedAssets,
-                    child: Text(
-                      'Gửi (${_selectedAssetIds.length})',
-                      style: const TextStyle(
-                        color: Colors.black,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                IconButton(
-                  icon: const Icon(Icons.close, size: 20),
-                  onPressed: () => setState(() {
-                    _showGallery = false;
-                    _selectedAssetIds.clear();
-                  }),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: _galleryLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _galleryPermissionDenied
-                    ? _buildGalleryDeniedView(primary)
-                    : GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 3,
-                          mainAxisSpacing: 4,
-                          crossAxisSpacing: 4,
-                        ),
-                        itemCount: _galleryAssets.length + 1,
-                        itemBuilder: (context, index) {
-                          if (index == _galleryAssets.length) {
-                            return _buildPickMoreTile(primary);
-                          }
-                          final asset = _galleryAssets[index];
-                          return AssetThumbTile(
-                            asset: asset,
-                            isSelected: _selectedAssetIds.contains(asset.id),
-                            isVideo: asset.type == AssetType.video,
-                            duration: asset.videoDuration,
-                            onTap: () => _toggleAssetSelection(asset),
-                          );
-                        },
-                      ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Chuyển ảnh HEIC/HEIF sang JPEG bằng engine thumbnail của platform.
-  /// Thử theo thứ tự: độ phân giải gốc → nửa phân giải → null (caller tự
-  /// fallback về file gốc).
-  Future<File?> _convertHeicToJpeg(AssetEntity asset, String fileName) async {
-    final width = asset.width > 0 ? asset.width : 4096;
-    final height = asset.height > 0 ? asset.height : 3024;
-    final attempts = <ThumbnailSize>[
-      ThumbnailSize(width, height),
-      ThumbnailSize(
-          width ~/ 2 == 0 ? 1 : width ~/ 2, height ~/ 2 == 0 ? 1 : height ~/ 2),
-    ];
-    for (final size in attempts) {
-      try {
-        ChatLogger.log(
-          'HEIC convert $fileName — requesting ${size.width}x${size.height}',
-        );
-        final jpegData = await asset.thumbnailDataWithSize(
-          size,
-          format: ThumbnailFormat.jpeg,
-          quality: 100,
-        );
-        if (jpegData != null && jpegData.isNotEmpty) {
-          final convFile = File(
-            '${Directory.systemTemp.path}/chat_heic_${DateTime.now().millisecondsSinceEpoch}_${asset.id.hashCode}.jpg',
-          );
-          await convFile.writeAsBytes(jpegData, flush: true);
-          ChatLogger.log(
-            'HEIC convert OK: ${jpegData.length} bytes',
-          );
-          return convFile;
-        }
-        ChatLogger.warn('HEIC convert returned empty data');
-      } catch (e, st) {
-        ChatLogger.error('HEIC convert error', error: e, stackTrace: st);
-      }
-    }
-    return null;
-  }
-
-  Widget _buildGalleryDeniedView(Color primary) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.photo_library_outlined,
-                size: 40, color: Colors.grey),
-            const SizedBox(height: 8),
-            const Text(
-              'Ứng dụng cần quyền truy cập thư viện ảnh để hiển thị ảnh tại đây.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primary,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () async {
-                    try {
-                      await PhotoManager.openSetting();
-                    } catch (_) {
-                      // Plugin native chưa đăng ký (thiếu full rebuild) hoặc
-                      // nền tảng không hỗ trợ — không văng exception.
-                    }
-                  },
-                  icon: const Icon(Icons.settings_outlined, size: 16),
-                  label: const Text('Mở cài đặt'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    setState(() => _galleryLoading = true);
-                    _loadGalleryAssets();
-                  },
-                  icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text('Thử lại'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _pickImages,
-                  icon: const Icon(Icons.folder_open, size: 16),
-                  label: const Text('Chọn từ hệ thống'),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPickMoreTile(Color primary) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: _pickImages,
-      child: Container(
-        decoration: BoxDecoration(
-          color: primary.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: primary.withValues(alpha: 0.4)),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.folder_open, color: primary, size: 24),
-            const SizedBox(height: 4),
-            Text(
-              'Chọn thêm',
-              style: TextStyle(fontSize: 11, color: primary),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // void _showComingSoon(String feature) {
-  //   _focusNode.unfocus();
-  //   showChatFeatureComingSoon(
-  //     context,
-  //     feature: feature,
-  //     config: ref.read(chatUiConfigProvider),
-  //   );
-  // }
-
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_onTextChanged);
     _focusNode.removeListener(_onFocusChanged);
     _controller.dispose();
@@ -700,20 +317,25 @@ class _MessageInputState extends ConsumerState<MessageInput>
                         child: child,
                       ),
                     ),
-                    child: _focusNode.hasFocus
+                    child: hasText
                         ? Padding(
-                            key: const ValueKey('back_arrow'),
+                            key: const ValueKey('text_actions'),
                             padding: const EdgeInsets.only(right: 2),
-                            child: _InputIcon(
-                              icon: Icons.arrow_back_ios_new_rounded,
-                              color: iconColor,
-                              onPressed: () {
-                                _focusNode.unfocus();
-                              },
+                            child: IconButton(
+                              constraints: const BoxConstraints.tightFor(
+                                  width: 40, height: 44),
+                              padding: EdgeInsets.zero,
+                              visualDensity: VisualDensity.standard,
+                              icon: Icon(
+                                Icons.arrow_forward_ios_rounded,
+                                size: 20,
+                                color: iconColor,
+                              ),
+                              onPressed: () => setState(() {}),
                             ),
                           )
                         : Row(
-                            key: const ValueKey('left_items'),
+                            key: const ValueKey('full_actions'),
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               _InputIcon(
@@ -731,7 +353,7 @@ class _MessageInputState extends ConsumerState<MessageInput>
                               _InputIcon(
                                 icon: Icons.photo_library_outlined,
                                 color: iconColor,
-                                onPressed: _openGallery,
+                                onPressed: _pickImages,
                               ),
                             ],
                           ),
@@ -758,98 +380,86 @@ class _MessageInputState extends ConsumerState<MessageInput>
                               focusNode: _focusNode,
                               cursorColor: Colors.black,
                               minLines: 1,
-                              maxLines: 5,
-                              textInputAction: TextInputAction.newline,
-                              style: config.inputTextColor == null
-                                  ? null
-                                  : TextStyle(color: config.inputTextColor),
+                              maxLines: 4,
+                              textInputAction: TextInputAction.send,
+                              onSubmitted: (_) => _handleSend(),
                               decoration: InputDecoration(
                                 hintText: 'Nhập tin nhắn...',
-                                hintStyle: config.inputHintColor == null
-                                    ? null
-                                    : TextStyle(color: config.inputHintColor),
+                                hintStyle: TextStyle(
+                                  color: config.inputHintColor ??
+                                      Colors.grey.shade500,
+                                  fontSize: 14,
+                                ),
                                 border: InputBorder.none,
                                 contentPadding:
-                                    const EdgeInsets.fromLTRB(14, 11, 4, 11),
+                                    const EdgeInsets.symmetric(horizontal: 16),
+                                isDense: true,
                               ),
                             ),
                           ),
-                          // IconButton(
-                          //   tooltip: 'Biểu tượng cảm xúc',
-                          //   icon: Icon(Icons.sentiment_satisfied_alt_outlined,
-                          //       color: iconColor),
-                          //   onPressed: () =>
-                          //       _showComingSoon('Biểu tượng cảm xúc'),
-                          // ),
+                          IconButton(
+                            constraints: const BoxConstraints.tightFor(
+                                width: 36, height: 44),
+                            padding: EdgeInsets.zero,
+                            visualDensity: VisualDensity.compact,
+                            icon: Icon(
+                              Icons.sentiment_satisfied_alt_outlined,
+                              color: iconColor,
+                            ),
+                            onPressed: () {},
+                          ),
                         ],
                       ),
                     ),
                   ),
                   const SizedBox(width: 4),
-                  SizedBox(
-                    width: 44,
-                    height: 44,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 160),
-                      child: IconButton(
-                        key: ValueKey(hasText),
-                        tooltip: hasText ? 'Gửi' : 'Thích',
-                        icon: Icon(
-                          hasText ? Icons.send : Icons.thumb_up_alt_rounded,
-                          color: hasText
-                              ? iconColor
-                              : (config.primaryActionColor ??
-                                  const Color(0xFF0787E8)),
+                  hasText
+                      ? IconButton(
+                          constraints: const BoxConstraints.tightFor(
+                              width: 40, height: 44),
+                          padding: EdgeInsets.zero,
+                          icon: Icon(
+                            Icons.send_rounded,
+                            color: config.primaryActionColor ??
+                                theme.colorScheme.primary,
+                          ),
+                          onPressed: _handleSend,
+                        )
+                      : IconButton(
+                          constraints: const BoxConstraints.tightFor(
+                              width: 40, height: 44),
+                          padding: EdgeInsets.zero,
+                          icon: const Text('👍', style: TextStyle(fontSize: 22)),
+                          onPressed: _handleSendLike,
                         ),
-                        onPressed: hasText ? _handleSend : _handleSendLike,
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),
             AnimatedSize(
               duration: const Duration(milliseconds: 180),
               curve: Curves.easeOut,
-              child: _showGallery
-                  ? _buildGalleryPanel(config)
-                  : _showAttachmentPanel
-                      ? SizedBox(
-                          height: 104,
-                          child: Row(
-                            children: [
-                              Padding(
-                                padding:
-                                    const EdgeInsets.only(left: 16, top: 8),
-                                child: Row(
-                                  children: [
-                                    // _AttachmentAction(
-                                    //   icon: Icons.camera_alt_outlined,
-                                    //   label: 'Máy ảnh',
-                                    //   color: iconColor,
-                                    //   onTap: _takePhoto,
-                                    // ),
-                                    // const SizedBox(width: 16),
-                                    // _AttachmentAction(
-                                    //   icon: Icons.photo_library_outlined,
-                                    //   label: 'Thư viện',
-                                    //   color: iconColor,
-                                    //   onTap: _openGallery,
-                                    // ),
-                                    const SizedBox(width: 16),
-                                    AttachmentAction(
-                                      icon: Icons.insert_drive_file_outlined,
-                                      label: 'Tệp',
-                                      color: iconColor,
-                                      onTap: _pickFiles,
-                                    ),
-                                  ],
+              child: _showAttachmentPanel
+                  ? SizedBox(
+                      height: 104,
+                      child: Row(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(left: 16, top: 8),
+                            child: Row(
+                              children: [
+                                AttachmentAction(
+                                  icon: Icons.insert_drive_file_outlined,
+                                  label: 'Tệp',
+                                  color: iconColor,
+                                  onTap: _pickFiles,
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        )
-                      : const SizedBox.shrink(),
+                        ],
+                      ),
+                    )
+                  : const SizedBox.shrink(),
             ),
           ],
         ),

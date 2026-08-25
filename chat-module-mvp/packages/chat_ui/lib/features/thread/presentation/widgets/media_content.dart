@@ -375,64 +375,103 @@ class MediaContent extends ConsumerWidget {
     );
   }
 
-  Widget _buildImageGrid(BuildContext context, List<String> urls) {
-    if (urls.length == 1) return _buildSingleImage(context, urls.first);
-    return Container(
-      width: 220,
-      margin: const EdgeInsets.only(bottom: 2),
-      child: GridView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          crossAxisSpacing: 4,
-          mainAxisSpacing: 4,
+  Widget _buildGridTile(
+    BuildContext context,
+    List<String> urls,
+    int index, {
+    bool isMore = false,
+    int extraCount = 0,
+  }) {
+    final url = urls[index];
+    return AspectRatio(
+      aspectRatio: 1.0,
+      child: GestureDetector(
+        onTap: () => _showImagePreviewDialog(
+          context,
+          imageUrls: urls,
+          initialIndex: index,
         ),
-        itemCount: urls.length.clamp(1, 4),
-        itemBuilder: (ctx, i) {
-          final url = urls[i];
-          final isMore = urls.length > 4 && i == 3;
-          final extraCount = urls.length - 4;
-          return GestureDetector(
-            onTap: () => _showImagePreviewDialog(
-              context,
-              imageUrls: urls,
-              initialIndex: i,
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.network(
-                    url,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Container(
-                      color: Colors.grey.shade300,
-                      child: const Icon(Icons.broken_image, color: Colors.grey),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.network(
+                url,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  color: Colors.grey.shade300,
+                  child: const Icon(Icons.broken_image, color: Colors.grey),
+                ),
+              ),
+              if (isMore)
+                Container(
+                  color: Colors.black54,
+                  alignment: Alignment.center,
+                  child: Text(
+                    '+$extraCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                  if (isMore)
-                    Container(
-                      color: Colors.black54,
-                      alignment: Alignment.center,
-                      child: Text(
-                        '+$extraCount',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          );
-        },
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
+
+  Widget _buildImageGrid(BuildContext context, List<String> urls) {
+    if (urls.isEmpty) return const SizedBox.shrink();
+    if (urls.length == 1) return _buildSingleImage(context, urls.first);
+
+    final displayCount = urls.length.clamp(2, 4);
+    final isMore = urls.length > 4;
+    final extraCount = urls.length - 4;
+
+    Widget buildRow(int startIndex, int count) {
+      return Row(
+        mainAxisSize: MainAxisSize.max,
+        children: [
+          for (var i = 0; i < count; i++) ...[
+            if (i > 0) const SizedBox(width: 4),
+            Expanded(
+              child: _buildGridTile(
+                context,
+                urls,
+                startIndex + i,
+                isMore: isMore && (startIndex + i == 3),
+                extraCount: extraCount,
+              ),
+            ),
+          ],
+          if (count < 2) ...[
+            const SizedBox(width: 4),
+            const Expanded(child: SizedBox.shrink()),
+          ],
+        ],
+      );
+    }
+
+    return Container(
+      width: 220,
+      margin: const EdgeInsets.only(bottom: 2),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          buildRow(0, displayCount >= 2 ? 2 : displayCount),
+          if (displayCount > 2) ...[
+            const SizedBox(height: 4),
+            buildRow(2, displayCount - 2),
+          ],
+        ],
+      ),
+    );
+  }
+
 
   static void _showImagePreviewDialog(
     BuildContext context, {

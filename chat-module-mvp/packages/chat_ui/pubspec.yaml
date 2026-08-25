@@ -19,8 +19,6 @@ dependencies:
   scrollable_positioned_list: ^0.3.8
   file_picker: ^11.0.2
   image_picker: ^1.1.2
-  # Đọc ảnh từ thư viện thiết bị cho gallery inline dưới khung nhập liệu.
-  photo_manager: ^3.6.0
   # Phát video ngay trong bong bóng chat.
   video_player: ^2.9.2
   html: ^0.15.4

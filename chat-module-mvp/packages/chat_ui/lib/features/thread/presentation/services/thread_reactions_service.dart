@@ -52,9 +52,13 @@ class ThreadReactionsService {
   Future<Map<String, MessageReactionSummary>?> buildRoomReactionSummaries(
     String roomId,
   ) async {
-    final configs = await getReactionConfigs();
-    final summaries = await _messageRepository.getRoomReactions(roomId);
+    final results = await Future.wait([
+      getReactionConfigs(),
+      _messageRepository.getRoomReactions(roomId),
+    ]);
     if (!_ref.mounted) return null;
+    final configs = results[0] as List<ReactionConfig>;
+    final summaries = results[1] as List<MessageReactionSummary>;
     final map = <String, MessageReactionSummary>{};
     for (final s in summaries) {
       var myIcon = s.myReactionIconUrl;
