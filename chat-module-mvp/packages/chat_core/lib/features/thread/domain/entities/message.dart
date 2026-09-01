@@ -123,8 +123,33 @@ class Message {
 
   @override
   bool operator ==(Object other) =>
-      identical(this, other) || (other is Message && other.id == id);
+      identical(this, other) ||
+      (other is Message &&
+          other.runtimeType == runtimeType &&
+          other.id == id &&
+          other.content == content &&
+          other.status == status &&
+          other.pin == pin &&
+          other.deletedOn == deletedOn &&
+          _mapEquals(other.metadata, metadata));
 
   @override
-  int get hashCode => id.hashCode;
+  int get hashCode => Object.hash(
+        id,
+        content,
+        status,
+        pin,
+        deletedOn,
+        metadata != null ? Object.hashAll(metadata!.entries) : null,
+      );
+}
+
+bool _mapEquals(Map<dynamic, dynamic>? a, Map<dynamic, dynamic>? b) {
+  if (identical(a, b)) return true;
+  if (a == null || b == null) return a == b;
+  if (a.length != b.length) return false;
+  for (final key in a.keys) {
+    if (!b.containsKey(key) || b[key] != a[key]) return false;
+  }
+  return true;
 }

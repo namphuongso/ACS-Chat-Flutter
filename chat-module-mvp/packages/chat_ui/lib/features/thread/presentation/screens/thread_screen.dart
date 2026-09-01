@@ -98,6 +98,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
 
   bool _showScrollToBottomButton = false;
   int _unreadNewMessagesCount = 0;
+  bool _isLeavingSelf = false;
 
   void _highlightMessage(String messageId) {
     _highlightTimer?.cancel();
@@ -131,6 +132,9 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
           _unreadNewMessagesCount = 0;
         });
       }
+      try {
+        ref.read(threadMessagesProvider.notifier).sendReadMessageIfNeeded();
+      } catch (_) {}
     } else {
       if (!_showScrollToBottomButton) {
         setState(() {
@@ -214,9 +218,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
           currentUserId: widget.currentUserId,
           roomType: conversation?.type ?? ConversationType.direct,
           onRoomChanged: (updatedRoom) {
-            ref
-                .read(conversationListProvider.notifier)
-                .updateRoomDetails(
+            ref.read(conversationListProvider.notifier).updateRoomDetails(
                   updatedRoom.id,
                   roomName: updatedRoom.roomName,
                   avatarUrl: updatedRoom.avatarUrl,
@@ -234,7 +236,8 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       await _openConversation(result);
       return;
     }
-    if ((result == true || result == 'room_disbanded') && context.mounted) {
+    if ((result == true || result == 'self_left' || result == 'room_disbanded') && context.mounted) {
+      _isLeavingSelf = true;
       final route = ModalRoute.of(context);
       if (route != null && route.isCurrent && Navigator.of(context).canPop()) {
         Navigator.of(context).pop();
@@ -546,6 +549,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
               .read(messageRepositoryProvider)
               .watchNewMessages(notifier.roomId, notifier.threadId);
           notifier.sendReadMessageIfNeeded();
+          unawaited(notifier.refreshLatest());
         } catch (_) {}
       }
     }
@@ -860,6 +864,7 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
     final isOnline = ref.watch(isOnlineProvider).value ?? true;
 
     ref.listen<List<Conversation>>(conversationListProvider, (previous, next) {
+      if (_isLeavingSelf) return;
       if (previous == null || previous.isEmpty) return;
       final roomStillExists = next.any((c) => c.id == roomId);
       if (!roomStillExists && mounted) {
@@ -1018,12 +1023,8 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       } else {
         if (isNetworkAvatar(roomAvatar)) {
           displayAvatar = roomAvatar;
-        } else if (isNetworkAvatar(otherAvatar)) {
-          displayAvatar = otherAvatar;
         } else {
-          displayAvatar = isNetworkAvatar(widget.senderAvatarUrl)
-              ? widget.senderAvatarUrl
-              : null;
+          displayAvatar = null;
         }
       }
     } else {
@@ -1275,7 +1276,8 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                                         : myParticipant?.acsUserId;
 
                                 final bool isMe = AcsUserUtils.isSameAcsUser(
-                                        message.senderId, widget.currentUserId) ||
+                                        message.senderId,
+                                        widget.currentUserId) ||
                                     (effectiveMyAcsUserId != null &&
                                         AcsUserUtils.isSameAcsUser(
                                             message.senderId,
@@ -1366,8 +1368,11 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
                                     canEdit: isMe,
                                   ),
                                 );
-                                return chatConfig.messageBubbleBuilder
-                                        ?.call(context, message, isMe, defaultBubble) ??
+                                return chatConfig.messageBubbleBuilder?.call(
+                                        context,
+                                        message,
+                                        isMe,
+                                        defaultBubble) ??
                                     defaultBubble;
                               },
                             ),
@@ -1544,8 +1549,6 @@ class _ThreadScreenContentState extends ConsumerState<_ThreadScreenContent>
       return false;
     }
   }
-
-
 
   void _showPinnedMessagesSheet(
     BuildContext context,

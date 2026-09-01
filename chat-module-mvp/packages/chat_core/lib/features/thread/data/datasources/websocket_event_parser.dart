@@ -106,9 +106,30 @@ class WebSocketEventParser {
       final usesRealtimeSchema = rawMessage.containsKey('MessageId') ||
           rawMessage.containsKey('CreatedDate') ||
           rawMessage.containsKey('SenderId');
-      return usesRealtimeSchema
+      final parsed = usesRealtimeSchema
           ? MessageModel.fromWebSocketJson(rawMessage, threadId: targetId)
           : MessageModel.fromServerJson(rawMessage, threadId: targetId);
+
+      if (eventType == 'MessageUpdated') {
+        final meta = parsed.metadata != null
+            ? Map<String, dynamic>.from(parsed.metadata!)
+            : <String, dynamic>{};
+        meta['eventType'] = 'MessageUpdated';
+        return MessageModel(
+          id: parsed.id,
+          threadId: parsed.threadId,
+          senderId: parsed.senderId,
+          senderDisplayName: parsed.senderDisplayName,
+          content: parsed.content,
+          type: parsed.type,
+          createdAt: parsed.createdAt,
+          status: parsed.status,
+          pin: parsed.pin,
+          deletedOn: parsed.deletedOn,
+          metadata: meta,
+        );
+      }
+      return parsed;
     }
 
     if (eventType == 'RoomCreated') {

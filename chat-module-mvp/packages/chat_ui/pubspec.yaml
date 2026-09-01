@@ -1,6 +1,6 @@
 name: chat_ui
 description: Widget mặc định cho module chat, phụ thuộc chat_core.
-version: 1.0.0
+version: 1.0.2
 publish_to: 'none'
 
 environment:

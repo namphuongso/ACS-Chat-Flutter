@@ -152,6 +152,7 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       unawaited(_identityStore.setMyAcsUserId(currentUserId, initialAcsUserId));
     }
 
+    _messageRepository.clearReadMessageState();
     _realtimeSub = _watchNewMessagesUseCase(roomId, threadId).listen((message) {
       if (message.type == MessageType.reactionUpdate) {
         unawaited(refreshReactions());
@@ -276,9 +277,11 @@ class ThreadMessagesNotifier extends Notifier<ThreadState> {
       }
     });
 
+    final repo = ref.read(messageRepositoryProvider);
     ref.onDispose(() {
       unawaited(_realtimeSub?.cancel());
       unawaited(stopWatchingUseCase(threadId));
+      repo.clearReadMessageState();
     });
 
     Future.microtask(() {

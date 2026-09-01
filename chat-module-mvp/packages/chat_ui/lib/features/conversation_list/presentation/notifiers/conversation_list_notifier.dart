@@ -54,18 +54,18 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
       removeRoom(message.threadId);
       return;
     }
-    if (eventType == 'MemberRemoved') {
+    if (eventType == 'MemberRemoved' || eventType == 'MemberLeft') {
       final payload = (metadata?['payload'] is Map) ? (metadata!['payload'] as Map).cast<String, dynamic>() : <String, dynamic>{};
-      final removedUserId = (metadata?['removedUserId'] ?? payload['removedUserId'] ?? '').toString();
+      final memberUserId = (metadata?['removedUserId'] ?? metadata?['userId'] ?? metadata?['actorUserId'] ?? payload['removedUserId'] ?? payload['userId'] ?? payload['actorUserId'] ?? '').toString();
       final currentUserId = ref.read(globalCurrentUserIdProvider).isNotEmpty
           ? ref.read(globalCurrentUserIdProvider)
           : ref.read(currentUserIdProvider);
 
-      final isSelfRemoved = metadata?['isSelf'] == true ||
-          (removedUserId.isNotEmpty &&
+      final isSelfEvent = metadata?['isSelf'] == true ||
+          (memberUserId.isNotEmpty &&
               currentUserId.isNotEmpty &&
-              AcsUserUtils.isSameAcsUser(removedUserId, currentUserId));
-      if (isSelfRemoved) {
+              AcsUserUtils.isSameAcsUser(memberUserId, currentUserId));
+      if (isSelfEvent) {
         removeRoom(message.threadId);
         return;
       }
@@ -103,6 +103,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
         : ref.read(currentUserIdProvider);
     final isMe = message.senderId.isNotEmpty &&
         AcsUserUtils.isSameAcsUser(message.senderId, currentUserId);
+    final isEditUpdate = eventType == 'MessageUpdated';
 
     final idx = state.indexWhere((c) => c.id == message.threadId || c.threadId == message.threadId);
     if (idx != -1) {
@@ -114,7 +115,7 @@ class ConversationListNotifier extends Notifier<List<Conversation>> {
           createdAt: message.createdAt,
           senderId: message.senderId,
         ),
-        unreadCount: isMe ? 0 : conversation.unreadCount + 1,
+        unreadCount: (isMe || isEditUpdate) ? conversation.unreadCount : conversation.unreadCount + 1,
       );
       state = _reorderWithUpdated(state, updated);
     } else {

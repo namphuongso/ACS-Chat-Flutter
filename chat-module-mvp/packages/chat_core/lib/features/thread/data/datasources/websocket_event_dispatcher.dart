@@ -12,6 +12,7 @@ class WebSocketEventDispatcher {
   StreamController<MessageModel>? _listController;
 
   Map<String, StreamController<MessageModel>> get threadControllers => _threadControllers;
+  bool get hasListListener => _listController != null && !_listController!.isClosed;
 
   Stream<MessageModel> watchNewMessages(String threadId) {
     final existing = _threadControllers[threadId];
@@ -37,7 +38,8 @@ class WebSocketEventDispatcher {
         message.type == MessageType.reactionUpdate ||
         message.type == MessageType.messagePinUpdate ||
         message.type == MessageType.roomPinnedUpdate ||
-        message.type == MessageType.roomUnpinnedUpdate;
+        message.type == MessageType.roomUnpinnedUpdate ||
+        message.metadata?['eventType'] == 'MessageUpdated';
 
     if (!isControlOrSignalMessage && message.id.isNotEmpty) {
       if (_recentMessageIdSet.contains(message.id)) {

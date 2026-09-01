@@ -277,7 +277,7 @@ class MediaContent extends ConsumerWidget {
                     ? null
                     : () {
                         Navigator.pop(sheetContext);
-                        _openFileUrl(url, mode: LaunchMode.inAppBrowserView);
+                        _openFileUrl(url, mode: LaunchMode.inAppBrowserView, fileName: fileName);
                       },
               ),
               ListTile(
@@ -293,7 +293,7 @@ class MediaContent extends ConsumerWidget {
                 ),
                 onTap: () {
                   Navigator.pop(sheetContext);
-                  _openFileUrl(url, mode: LaunchMode.externalApplication);
+                  _openFileUrl(url, mode: LaunchMode.externalApplication, fileName: fileName);
                 },
               ),
             ],
@@ -304,8 +304,24 @@ class MediaContent extends ConsumerWidget {
   }
 
   static Future<void> _openFileUrl(String url,
-      {required LaunchMode mode}) async {
-    final uri = Uri.tryParse(url);
+      {required LaunchMode mode, String? fileName}) async {
+    if (url.isEmpty) return;
+
+    var targetUrl = url;
+    if (mode == LaunchMode.inAppBrowserView && fileName != null && fileName.isNotEmpty) {
+      final ext = fileName.split('.').last.toLowerCase();
+      if (ext == 'doc' ||
+          ext == 'docx' ||
+          ext == 'xls' ||
+          ext == 'xlsx' ||
+          ext == 'ppt' ||
+          ext == 'pptx') {
+        targetUrl =
+            'https://view.officeapps.live.com/op/embed.aspx?src=${Uri.encodeComponent(url)}';
+      }
+    }
+
+    final uri = Uri.tryParse(targetUrl);
     if (uri == null) return;
     try {
       if (await canLaunchUrl(uri)) {

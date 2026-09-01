@@ -29,7 +29,7 @@ class ConversationList extends ConsumerStatefulWidget {
 }
 
 class _ConversationListState extends ConsumerState<ConversationList>
-    with RouteAware {
+    with WidgetsBindingObserver, RouteAware {
   final _scrollController = ScrollController();
   final _searchController = TextEditingController();
   String _keyword = '';
@@ -37,6 +37,7 @@ class _ConversationListState extends ConsumerState<ConversationList>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scrollController.addListener(_maybeLoadMore);
     Future.microtask(() {
       if (mounted) {
@@ -74,11 +75,19 @@ class _ConversationListState extends ConsumerState<ConversationList>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _scrollController.removeListener(_maybeLoadMore);
     _scrollController.dispose();
     _searchController.dispose();
     chatRouteObserver.unsubscribe(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      ref.read(conversationListProvider.notifier).refresh();
+    }
   }
 
   void _maybeLoadMore() {
@@ -259,9 +268,7 @@ class _ConversationListState extends ConsumerState<ConversationList>
                                       : null)
                                   : (isNetworkAvatar(conversation.avatarUrl)
                                       ? conversation.avatarUrl
-                                      : (isNetworkAvatar(other?.avatarUrl)
-                                          ? other?.avatarUrl
-                                          : null));
+                                      : null);
 
                               final isUnread = conversation.unreadCount > 0;
                               final config = ref.watch(chatUiConfigProvider);

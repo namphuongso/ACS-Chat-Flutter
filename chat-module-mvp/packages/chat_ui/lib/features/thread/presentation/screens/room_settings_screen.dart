@@ -918,8 +918,10 @@ class _RoomSettingsScreenState extends ConsumerState<RoomSettingsScreen> {
           message: 'Đã rời khỏi phòng chat',
           config: ref.read(chatUiConfigProvider),
         );
-        Navigator.pop(context, true); // Pop màn hình Tùy chọn với kết quả true
-        ref.read(conversationListProvider.notifier).removeRoom(widget.roomId);
+        Navigator.pop(context, 'self_left');
+        Future.microtask(() {
+          ref.read(conversationListProvider.notifier).removeRoom(widget.roomId);
+        });
       } else {
         showChatToast(
           context,

@@ -69,7 +69,6 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
     return base.replace(queryParameters: {
       ...base.queryParameters,
       _config.webSocketTokenQueryParameter: token,
-      'deviceId': _deviceId,
     });
   }
 
@@ -87,7 +86,9 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
         return;
       }
       final token = await provider.getAppToken();
-      final channel = WebSocketChannel.connect(_socketUri(token));
+      final uri = _socketUri(token);
+      ChatLogger.log('Connecting to WebSocket: $uri');
+      final channel = WebSocketChannel.connect(uri);
       await channel.ready.timeout(const Duration(seconds: 15));
       if (_disposed) {
         await channel.sink.close();
@@ -147,14 +148,25 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
         _startHeartbeat(Duration(seconds: max(5, interval)));
         final roomsToEnter = {..._activeRoomIds, ..._watchedRoomIds};
         for (final roomId in roomsToEnter) {
-          _send({'type': 'enter_room', 'roomId': roomId});
+          final payload = <String, dynamic>{'type': 'enter_room', 'roomId': roomId};
+          if (_lastVisibleMessageId != null && _lastVisibleMessageId!.isNotEmpty) {
+            payload['lastVisibleMessageId'] = _lastVisibleMessageId;
+          }
+          _send(payload);
         }
+        return;
+      }
+      if (type == 'read_ack') {
+        final success = event['success'] == true;
+        final readAtUtc = event['readAtUtc']?.toString();
+        ChatLogger.log('[read_ack] Success: $success, readAtUtc: $readAtUtc');
         return;
       }
       if (type == 'error') {
         final code =
             event['errorCode']?.toString() ?? event['code']?.toString();
         final message = event['message']?.toString() ?? '';
+        ChatLogger.warn('[WebSocket Error] code: $code, message: $message');
         if (_looksLikeAuthError('$code $message')) _expireSession();
         return;
       }
@@ -199,31 +211,30 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
           '[sendReadMessage] Skipped: app is paused / in background');
       return;
     }
+    if (roomId != null && roomId.isNotEmpty && !_activeRoomIds.contains(roomId)) {
+      ChatLogger.log(
+          '[sendReadMessage] Skipped: room $roomId is not active on socket');
+      return;
+    }
+    if (_activeRoomIds.isEmpty) {
+      ChatLogger.log('[sendReadMessage] Skipped: _activeRoomIds is empty');
+      return;
+    }
     if (_lastVisibleMessageId == lastVisibleMessageId) {
       ChatLogger.log(
           '[sendReadMessage] Skipped: already sent for $lastVisibleMessageId');
       return;
     }
-    _lastVisibleMessageId = lastVisibleMessageId;
-    if (_serverConnected) {
-      final targetRoomId = (roomId != null && roomId.isNotEmpty)
-          ? roomId
-          : (_activeRoomIds.isNotEmpty ? _activeRoomIds.first : null);
-
-      if (targetRoomId == null || targetRoomId.isEmpty) {
-        ChatLogger.log(
-            '[sendReadMessage] Skipped: no target room for $lastVisibleMessageId');
-        return;
-      }
-
-      _send({
-        'type': 'read',
-        'roomId': targetRoomId,
-        'lastVisibleMessageId': lastVisibleMessageId,
-      });
-    } else {
+    if (!_serverConnected) {
       ChatLogger.log('[sendReadMessage] Skipped: _serverConnected is false');
+      return;
     }
+
+    _send({
+      'type': 'read',
+      'lastVisibleMessageId': lastVisibleMessageId,
+    });
+    _lastVisibleMessageId = lastVisibleMessageId;
   }
 
   @override
@@ -233,7 +244,6 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
 
   @override
   void leaveActiveRoom() {
-    _isAppPaused = true;
     final roomsToLeave = {
       ..._activeRoomIds,
       ..._watchedRoomIds,
@@ -241,13 +251,11 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
     };
     if (_serverConnected && roomsToLeave.isNotEmpty) {
       for (final roomId in roomsToLeave) {
-        _send({
-          'type': 'leave_room',
-          'roomId': roomId,
-          if (_lastVisibleMessageId != null &&
-              _lastVisibleMessageId!.isNotEmpty)
-            'lastVisibleMessageId': _lastVisibleMessageId,
-        });
+        final payload = <String, dynamic>{'type': 'leave_room', 'roomId': roomId};
+        if (_lastVisibleMessageId != null && _lastVisibleMessageId!.isNotEmpty) {
+          payload['lastVisibleMessageId'] = _lastVisibleMessageId;
+        }
+        _send(payload);
       }
     }
     _lastVisibleMessageId = null;
@@ -335,10 +343,13 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
     _threadIdsByRoom[roomId] = threadId;
     _activeRoomIds.add(roomId);
     _watchedRoomIds.add(roomId);
-    _lastVisibleMessageId = null;
 
     if (_serverConnected) {
-      _send({'type': 'enter_room', 'roomId': roomId});
+      final payload = <String, dynamic>{'type': 'enter_room', 'roomId': roomId};
+      if (_lastVisibleMessageId != null && _lastVisibleMessageId!.isNotEmpty) {
+        payload['lastVisibleMessageId'] = _lastVisibleMessageId;
+      }
+      _send(payload);
     } else {
       unawaited(_ensureConnected());
     }
@@ -348,6 +359,7 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
 
   @override
   Stream<MessageModel> watchListMessages() {
+    _isAppPaused = false;
     unawaited(_ensureConnected());
     return _dispatcher.watchListMessages();
   }
@@ -363,7 +375,11 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
       _activeRoomIds.remove(roomId);
       _watchedRoomIds.remove(roomId);
       if (_serverConnected) {
-        _send({'type': 'leave_room', 'roomId': roomId});
+        final payload = <String, dynamic>{'type': 'leave_room', 'roomId': roomId};
+        if (_lastVisibleMessageId != null && _lastVisibleMessageId!.isNotEmpty) {
+          payload['lastVisibleMessageId'] = _lastVisibleMessageId;
+        }
+        _send(payload);
       }
     }
     await _dispatcher.stopWatching(threadId);
@@ -377,14 +393,18 @@ class WebSocketRealtimeDataSourceImpl implements WebSocketRealtimeDataSource {
   }
 
   void _checkIdleSocketClose() {
-    if (_dispatcher.threadControllers.isEmpty &&
+    if (!_dispatcher.hasListListener &&
+        _dispatcher.threadControllers.isEmpty &&
         _threadIdsByRoom.isEmpty &&
         _watchedRoomIds.isEmpty) {
+      ChatLogger.log(
+          '[_checkIdleSocketClose] Closing idle socket: threadControllers=${_dispatcher.threadControllers.length}, threadIdsByRoom=${_threadIdsByRoom.length}, watchedRoomIds=${_watchedRoomIds.length}');
       unawaited(_closeSocket());
     }
   }
 
   Future<void> _closeSocket() async {
+    ChatLogger.log('[WebSocket] Closing socket connection');
     _manualClose = true;
     _reconnectTimer?.cancel();
     _heartbeatTimer?.cancel();

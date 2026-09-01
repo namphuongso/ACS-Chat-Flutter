@@ -289,6 +289,7 @@ class _MessageInputState extends ConsumerState<MessageInput> {
         config.iconColor ??
         theme.colorScheme.primary;
     final hasText = _controller.text.trim().isNotEmpty;
+    final isExpanded = _focusNode.hasFocus || hasText;
 
     return Material(
       color: config.inputBarBackgroundColor ?? Colors.white,
@@ -317,7 +318,7 @@ class _MessageInputState extends ConsumerState<MessageInput> {
                         child: child,
                       ),
                     ),
-                    child: hasText
+                    child: isExpanded
                         ? Padding(
                             key: const ValueKey('text_actions'),
                             padding: const EdgeInsets.only(right: 2),
@@ -331,7 +332,10 @@ class _MessageInputState extends ConsumerState<MessageInput> {
                                 size: 20,
                                 color: iconColor,
                               ),
-                              onPressed: () => setState(() {}),
+                              onPressed: () {
+                                _focusNode.unfocus();
+                                setState(() {});
+                              },
                             ),
                           )
                         : Row(
@@ -361,54 +365,40 @@ class _MessageInputState extends ConsumerState<MessageInput> {
                   const SizedBox(width: 2),
                   Expanded(
                     child: Container(
-                      height: 44,
                       decoration: BoxDecoration(
                         color: config.inputFieldFillColor ??
                             const Color(0xFFF5F6FA),
-                        borderRadius: BorderRadius.circular(22),
+                        borderRadius: BorderRadius.circular(20),
                         border: Border.all(
                           color: config.inputFieldBorderColor ??
                               theme.colorScheme.outlineVariant,
                         ),
                       ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: _controller,
-                              focusNode: _focusNode,
-                              cursorColor: Colors.black,
-                              minLines: 1,
-                              maxLines: 4,
-                              textInputAction: TextInputAction.send,
-                              onSubmitted: (_) => _handleSend(),
-                              decoration: InputDecoration(
-                                hintText: 'Nhập tin nhắn...',
-                                hintStyle: TextStyle(
-                                  color: config.inputHintColor ??
-                                      Colors.grey.shade500,
-                                  fontSize: 14,
-                                ),
-                                border: InputBorder.none,
-                                contentPadding:
-                                    const EdgeInsets.symmetric(horizontal: 16),
-                                isDense: true,
-                              ),
-                            ),
+                      child: TextField(
+                        controller: _controller,
+                        focusNode: _focusNode,
+                        cursorColor: Colors.black,
+                        minLines: 1,
+                        maxLines: 4,
+                        textAlignVertical: TextAlignVertical.center,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => _handleSend(),
+                        decoration: InputDecoration(
+                          hintText: 'Nhập tin nhắn...',
+                          hintMaxLines: 1,
+                          hintStyle: TextStyle(
+                            color: config.inputHintColor ??
+                                Colors.grey.shade500,
+                            fontSize: 14,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          IconButton(
-                            constraints: const BoxConstraints.tightFor(
-                                width: 36, height: 44),
-                            padding: EdgeInsets.zero,
-                            visualDensity: VisualDensity.compact,
-                            icon: Icon(
-                              Icons.sentiment_satisfied_alt_outlined,
-                              color: iconColor,
-                            ),
-                            onPressed: () {},
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 10,
                           ),
-                        ],
+                          isDense: true,
+                        ),
                       ),
                     ),
                   ),
